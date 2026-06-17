@@ -20,26 +20,6 @@ using namespace usbip;
 
 _IRQL_requires_(PASSIVE_LEVEL)
 _IRQL_requires_same_
-PAGED auto init(_Inout_ filter_ext &f, _In_opt_ filter_ext *parent)
-{
-	PAGED_CODE();
-
-	IoInitializeRemoveLock(&f.remove_lock, unique_ptr::pooltag, 0, 0);
-
-	if (!parent) {
-		NT_ASSERT(f.is_hub);
-	} else if (auto lck = &parent->remove_lock; auto err = IoAcquireRemoveLock(lck, 0)) {
-		Trace(TRACE_LEVEL_ERROR, "Acquire remove lock %!STATUS!", err);
-		return err;
-	} else {
-		f.device.parent_remove_lock = lck;
-	}
-
-	return STATUS_SUCCESS;
-}
-
-_IRQL_requires_(PASSIVE_LEVEL)
-_IRQL_requires_same_
 PAGED void do_destroy(_Inout_ filter_ext &f)
 {
 	PAGED_CODE();
@@ -47,12 +27,7 @@ PAGED void do_destroy(_Inout_ filter_ext &f)
 	if (f.is_hub) {
                 unique_ptr{f.hub.previous};
 	} else {
-		auto &dev = f.device;
-		NT_ASSERT(!dev.usbd_handle); // @see IRP_MN_REMOVE_DEVICE
-
-                if (auto lck = dev.parent_remove_lock) {
-			IoReleaseRemoveLock(lck, 0);
-		}
+		NT_ASSERT(!f.device.usbd_handle); // @see IRP_MN_REMOVE_DEVICE
 	}
 }
 
@@ -174,11 +149,6 @@ PAGED NTSTATUS usbip::do_add_device(
 	fltr->self = fido;
 	fltr->pdo = pdo;
 	fltr->is_hub = !parent;
-
-	if (auto err = init(*fltr, parent)) {
-		destroy(*fltr);
-		return err;
-	}
 
 	auto &target = fltr->target; // FDO or another FiDO
 

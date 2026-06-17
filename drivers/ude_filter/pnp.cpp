@@ -10,7 +10,6 @@
 #include "irp.h"
 #include "query_interface.h"
 
-#include <libdrv/remove_lock.h>
 #include <libdrv/unique_ptr.h>
 #include <libdrv/ioctl.h>
 
@@ -125,12 +124,10 @@ PAGED auto query_bus_relations(_Inout_ filter_ext &fltr, _In_ IRP *irp)
 
 _IRQL_requires_same_
 _IRQL_requires_(PASSIVE_LEVEL)
-PAGED auto remove_device(_Inout_ filter_ext &fltr, _In_ IRP *irp, _In_ libdrv::RemoveLockGuard &lock)
+PAGED auto remove_device(_Inout_ filter_ext &fltr, _In_ IRP *irp)
 {
 	PAGED_CODE();
 	Trace(TRACE_LEVEL_INFORMATION, "%04x", ptr04x(fltr.self));
-
-	lock.release_and_wait(); // all allocated URBs are freed after this, USBD_HANDLE can be closed
 
 	if (fltr.is_hub) {
 		//
@@ -220,19 +217,13 @@ PAGED NTSTATUS usbip::pnp(_In_ DEVICE_OBJECT *devobj, _In_ IRP *irp)
 	PAGED_CODE();
 	auto &fltr = *get_filter_ext(devobj);
 
-	libdrv::RemoveLockGuard lck(fltr.remove_lock, irp);
-	if (auto err = lck.acquired()) {
-		Trace(TRACE_LEVEL_ERROR, "Acquire remove lock %!STATUS!", err);
-		return CompleteRequest(irp, err);
-	}
-
 	switch (auto &stack = *IoGetCurrentIrpStackLocation(irp); stack.MinorFunction) {
 	case IRP_MN_START_DEVICE: // must be started after lower device objects
 		if (auto st = ForwardIrpSynchronously(fltr, irp); true) {
 		        return CompleteRequest(irp, st);
 	        }
 	case IRP_MN_REMOVE_DEVICE:
-		return remove_device(fltr, irp, lck);
+		return remove_device(fltr, irp);
 	case IRP_MN_QUERY_DEVICE_RELATIONS:
 		if (fltr.is_hub && stack.Parameters.QueryDeviceRelations.Type == BusRelations) {
 			return query_bus_relations(fltr, irp);

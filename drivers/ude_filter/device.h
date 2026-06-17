@@ -24,15 +24,12 @@ struct filter_ext
 	DEVICE_OBJECT *target; // = IoAttachDeviceToDeviceStack(self, pdo); next lower object in the device stack
 	DEVICE_OBJECT *pdo; // the second argument of DRIVER_ADD_DEVICE
 
-	IO_REMOVE_LOCK remove_lock;
-
 	union {
 		struct {
                         DEVICE_RELATIONS *previous; // children
 		} hub; // is_hub == true
 
 		struct {
-			IO_REMOVE_LOCK *parent_remove_lock; // -> hub filter_ext.remove_lock
 			USBD_HANDLE usbd_handle;
 		} device; // is_hub == false
 	};

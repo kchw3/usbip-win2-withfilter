@@ -288,7 +288,8 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="app.cpp" />
-    <ClCompile Include="device_columns.cpp" />
+        <ClCompile Include="device_columns.cpp" />
+    <ClCompile Include="filter_dialog.cpp" />
     <ClCompile Include="frame.cpp" />
     <ClCompile Include="log.cpp" />
     <ClCompile Include="persist.cpp" />
@@ -301,7 +302,8 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="app.h" />
-    <ClInclude Include="device_columns.h" />
+        <ClInclude Include="device_columns.h" />
+    <ClInclude Include="filter_dialog.h" />
     <ClInclude Include="frame.h" />
     <ClInclude Include="log.h" />
     <ClInclude Include="persist.h" />

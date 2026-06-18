@@ -321,7 +321,105 @@ std::optional<std::vector<usbip::imported_device>> usbip::vhci::get_imported_dev
                 devices = make_imported_devices({r->devices, cnt});
         }
 
-        return devices;
+                return devices;
+}
+
+const std::vector<usbip::device_type_category>& usbip::device_type_categories()
+{
+        using e = device_filter_entry;
+        static const std::vector<device_type_category> v {
+                { "hid",          "HID / input (keyboard, mouse)",       { e{ 0x03, 0, 0, filter_match_class } } },
+                { "mass_storage", "Mass storage (USB drives)",           { e{ 0x08, 0, 0, filter_match_class } } },
+                { "network",      "Network adapter (CDC/RNDIS/NCM/ECM)", { e{ 0x02, 0, 0, filter_match_class },
+                                                                          e{ 0x0A, 0, 0, filter_match_class } } },
+                { "wireless",     "Wireless / Bluetooth radio",          { e{ 0xE0, 0, 0, filter_match_class } } },
+                { "audio",        "Audio",                               { e{ 0x01, 0, 0, filter_match_class } } },
+                { "video",        "Video / webcam",                      { e{ 0x0E, 0, 0, filter_match_class } } },
+                { "printer",      "Printer",                             { e{ 0x07, 0, 0, filter_match_class } } },
+                { "image",        "Imaging / scanner (PTP/MTP)",         { e{ 0x06, 0, 0, filter_match_class } } },
+                { "smartcard",    "Smart card",                          { e{ 0x0B, 0, 0, filter_match_class } } },
+                { "hub",          "Hub",                                 { e{ 0x09, 0, 0, filter_match_class } } },
+                { "vendor",       "Vendor-specific",                     { e{ 0xFF, 0, 0, filter_match_class } } },
+        };
+
+        return v;
+}
+
+std::optional<usbip::device_filter_policy> usbip::vhci::get_device_filter(_In_ HANDLE dev)
+{
+        std::optional<device_filter_policy> result;
+
+        constexpr auto entries_offset = offsetof(ioctl::device_filter, entries);
+
+        std::vector<char> buf;
+        ioctl::device_filter *r{};
+
+        for (auto cnt = 16; true; cnt <<= 1) {
+                buf.resize(ioctl::device_filter_size(cnt));
+
+                r = reinterpret_cast<ioctl::device_filter*>(buf.data());
+                r->size = sizeof(*r);
+
+                if (DWORD BytesReturned{}; // must be set if the last arg is NULL
+                    DeviceIoControl(dev, ioctl::GET_DEVICE_FILTER, r, sizeof(r->size),
+                                    buf.data(), DWORD(buf.size()), &BytesReturned, nullptr)) {
+
+                        if (BytesReturned < entries_offset) [[unlikely]] {
+                                SetLastError(USBIP_ERROR_DRIVER_RESPONSE);
+                                return result;
+                        }
+
+                        buf.resize(BytesReturned);
+                        break;
+
+                } else if (GetLastError() != ERROR_INSUFFICIENT_BUFFER) {
+                        return result;
+                }
+        }
+
+        r = reinterpret_cast<ioctl::device_filter*>(buf.data());
+
+        device_filter_policy policy;
+        policy.mode = r->mode == vhci::filter_mode::disabled ? filter_mode::disabled : filter_mode::whitelist;
+
+        auto avail = (buf.size() - entries_offset) / sizeof(*r->entries);
+        auto cnt = r->count < avail ? r->count : avail;
+
+        policy.entries.reserve(cnt);
+        for (size_t i = 0; i < cnt; ++i) {
+                auto &s = r->entries[i];
+                policy.entries.push_back(device_filter_entry{ s.bClass, s.bSubClass, s.bProtocol, s.match_flags });
+        }
+
+        result = std::move(policy);
+        return result;
+}
+
+bool usbip::vhci::set_device_filter(_In_ HANDLE dev, _In_ const device_filter_policy &policy)
+{
+        auto cnt = policy.entries.size();
+        if (cnt > ioctl::MAX_DEVICE_FILTER_ENTRIES) {
+                SetLastError(ERROR_INVALID_PARAMETER);
+                return false;
+        }
+
+        std::vector<char> buf(ioctl::device_filter_size(cnt ? cnt : 1));
+        auto r = reinterpret_cast<ioctl::device_filter*>(buf.data());
+
+        r->size = sizeof(*r);
+        r->mode = policy.mode == filter_mode::disabled ? vhci::filter_mode::disabled : vhci::filter_mode::whitelist;
+        r->count = static_cast<ULONG>(cnt); // r->reserved is already zero (buf is zero-initialized)
+
+        for (size_t i = 0; i < cnt; ++i) {
+                auto &s = policy.entries[i];
+                r->entries[i] = vhci::device_filter_entry{ s.bClass, s.bSubClass, s.bProtocol, s.match_flags };
+        }
+
+        auto needed = offsetof(ioctl::device_filter, entries) + cnt * sizeof(*r->entries);
+        auto inlen = static_cast<DWORD>(needed < sizeof(*r) ? sizeof(*r) : needed);
+
+        DWORD BytesReturned{}; // must be set if the last arg is NULL
+        return DeviceIoControl(dev, ioctl::SET_DEVICE_FILTER, r, inlen, nullptr, 0, &BytesReturned, nullptr);
 }
 
 int usbip::vhci::attach(_In_ HANDLE dev, _In_ const attach_args &args)

@@ -11,6 +11,12 @@ constexpr auto &tcp_port = "3240";
 constexpr auto &driver_filename = L"usbip2_ude"; // used by filter driver
 constexpr auto &persistent_devices_value_name = L"PersistentDevices";
 
+/*
+ * REG_BINARY value under the driver's Parameters key that stores the device-type
+ * filter (whitelist) policy. @see usbip::vhci::ioctl::device_filter
+ */
+constexpr auto &device_filter_value_name = L"DeviceFilter";;
+
 enum op_status_t // op_common.status
 {
         ST_OK,

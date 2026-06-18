@@ -170,7 +170,8 @@
     <ClCompile Include="taskbaricon.cpp" />
     <ClCompile Include="app.cpp" />
     <ClCompile Include="wxutils.cpp" />
-    <ClCompile Include="tree_comparator.cpp" />
+        <ClCompile Include="tree_comparator.cpp" />
+    <ClCompile Include="filter_dialog.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="wusbip.h" />
@@ -184,7 +185,8 @@
     <ClInclude Include="taskbaricon.h" />
     <ClInclude Include="app.h" />
     <ClInclude Include="wxutils.h" />
-    <ClInclude Include="tree_comparator.h" />
+        <ClInclude Include="tree_comparator.h" />
+    <ClInclude Include="filter_dialog.h" />
   </ItemGroup>
   <ItemGroup>
     <Text Include="readme.txt" />

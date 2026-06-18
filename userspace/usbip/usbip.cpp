@@ -127,9 +127,30 @@ void add_cmd_list(CLI::App &app)
 		->add_flag("-s,--stashed,--persistent", r.persistent, "List persistent devices stashed by 'port --stash'");
 }
 
+void add_cmd_filter(CLI::App &app)
+{
+	static filter_args r;
+
+	auto cmd = app.add_subcommand("filter", "Show/configure the device-type (USB class) whitelist")
+		->callback(pack(cmd_filter, &r));
+
+	cmd->add_flag("-s,--show", r.show, "Show the current filter policy (default action)");
+	cmd->add_flag("-l,--list-categories", r.list_categories, "List the available device-type categories");
+
+	auto allow = cmd->add_option("-a,--allow", r.categories,
+		"Replace the whitelist with these device-type categories (comma/space separated)")
+		->delimiter(',');
+
+	auto disable = cmd->add_flag("--disable", r.disable, "Turn filtering off (allow all devices)");
+	auto deny_all = cmd->add_flag("--deny-all", r.deny_all, "Enable an empty whitelist (deny all devices)");
+
+	allow->excludes(disable)->excludes(deny_all);
+	disable->excludes(deny_all);
+}
+
 void add_cmd_port(CLI::App &app)
 {
-	static port_args r;
+	static port_args r;;
 
 	auto cmd = app.add_subcommand("port", "Show/stash imported USB devices")
 		->callback(pack(cmd_port, &r));
@@ -171,12 +192,13 @@ void init(CLI::App &app)
 	app.add_option("-t,--tcp-port", global_args.tcp_port, "TCP/IP port number of USB/IP server")
 		->check(CLI::Range(1024, USHRT_MAX));
 
-	add_cmd_attach(app);
+		add_cmd_attach(app);
 	add_cmd_detach(app);
 	add_cmd_list(app);
 	add_cmd_port(app);
+	add_cmd_filter(app);
 
-	app.require_subcommand(1);
+	app.require_subcommand(1);;
 }
 
 auto run(int argc, wchar_t *argv[])

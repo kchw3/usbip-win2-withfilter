@@ -28,6 +28,36 @@
   - [WskSend](https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/wsk/nc-wsk-pfn_wsk_send) reads data from URB transfer buffer
   - [WskReceive](https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/wsk/nc-wsk-pfn_wsk_receive) writes data to URB transfer buffer
 - A dedicated thread is created for each virtual device to receive data from a server
+- **Device-type (USB class) filtering** enforced inside the `usbip2_ude` driver (see below)
+
+## Device-type filtering (whitelist)
+For security, the client can restrict which **types** of USB devices are allowed to attach,
+based on their USB class. Enforcement happens inside the `usbip2_ude` driver **before** the
+virtual device is presented to Windows (`UdecxUsbDevicePlugIn`), so a blocked device is never
+enumerated by the OS and no class driver is ever loaded for it.
+
+- **Whitelist model, interface-level, composite-aware.** During attach, the driver fetches the
+  configuration descriptor(s) over the already-established USB/IP connection and inspects the
+  device-descriptor class plus **every interface in every configuration**. A device is allowed
+  only if *every* class it exposes is in the whitelist. This blocks composite devices that try to
+  smuggle a disallowed interface (e.g. a flash drive that also presents a hidden HID keyboard).
+- **Fail-closed default.** With no policy configured, the filter denies every device until an
+  administrator allows specific types. Any descriptor fetch/parse error also denies the device.
+- **Logging.** Every rejection is written to the **Windows System event log** (source
+  `usbip2_ude`) with the VID/PID, interface number and class, and to the WPP trace.
+- **Configuration** is stored in the driver registry (`Parameters\DeviceFilter`) and changed via
+  admin-gated IOCTLs, exposed through `libusbip` and the `usbip filter` CLI command.
+
+### `usbip filter` CLI
+```
+usbip filter                      # show the current policy
+usbip filter --list-categories    # list available device-type categories
+usbip filter --allow hid,mass_storage   # whitelist these categories (replaces the policy)
+usbip filter --deny-all           # enable an empty whitelist (deny every device)
+usbip filter --disable            # turn filtering off (allow all device types)
+```
+Categories include: `hid`, `mass_storage`, `network`, `wireless`, `audio`, `video`, `printer`,
+`image`, `smartcard`, `hub`, `vendor`. Changing the policy requires administrator rights.
 
 ## Differences with [cezanne/usbip-win](https://github.com/cezanne/usbip-win)
 - The 2-Clause BSD License since release 0.9.7.0

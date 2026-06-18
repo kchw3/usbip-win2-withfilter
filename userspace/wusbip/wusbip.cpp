@@ -11,9 +11,11 @@
 #include "font.h"
 #include "log.h"
 #include "app.h"
+#include "filter_dialog.h"
 
 #include <libusbip/remote.h>
 #include <libusbip/persistent.h>
+#include <libusbip/vhci.h>
 #include <libusbip/src/file_ver.h>
 
 #include <wx/event.h>
@@ -38,6 +40,8 @@ using namespace usbip;
 const auto g_persistent_mark = L'\u2713'; // CHECK MARK, 2714 HEAVY CHECK MARK
 auto &g_key_devices = L"/devices";
 auto &g_key_url = L"url";
+
+enum { ID_EDIT_DEVICE_FILTER = 6100 }; // not in the wxFormBuilder-generated Frame id enum;
 
 /*
  * Menu/View/Appearance, radio items
@@ -423,10 +427,46 @@ void MainFrame::init()
         auto port = get_tcp_port();
         m_spinCtrlPort->SetValue(wxString::FromAscii(port)); // NI_MAXSERV
 
-        init_tree_list();
+                init_tree_list();
+
+        if (m_menu_edit) { // add the device-type filter dialog entry (not defined in wxFormBuilder)
+                m_menu_edit->AppendSeparator();
+                m_menu_edit->Append(ID_EDIT_DEVICE_FILTER, _("Device type &filter...\tCtrl+F"),
+                                    _("Configure which USB device types are allowed to attach"));
+                Bind(wxEVT_COMMAND_MENU_SELECTED, &MainFrame::on_edit_device_filter, this, ID_EDIT_DEVICE_FILTER);
+        }
 
         Bind(wxEVT_TIMER, &MainFrame::on_status_bar_timer, this);
         Bind(EVT_DEVICE_STATE, &MainFrame::on_device_state, this);
+}
+
+void MainFrame::on_edit_device_filter(wxCommandEvent&)
+{
+        auto dev = vhci::open();
+        if (!dev) {
+                wxLogError(_("Cannot open the driver: %s"), GetLastErrorMsg().c_str());
+                return;
+        }
+
+        auto current = vhci::get_device_filter(dev.get());
+        if (!current) {
+                wxLogError(_("Cannot read the device-type filter: %s"), GetLastErrorMsg().c_str());
+                return;
+        }
+
+        FilterDialog dlg(this, *current);
+        if (dlg.ShowModal() != wxID_OK) {
+                return;
+        }
+
+        if (auto policy = dlg.policy(); !vhci::set_device_filter(dev.get(), policy)) {
+                wxLogError(_("Cannot save the device-type filter: %s"), GetLastErrorMsg().c_str());
+        } else {
+                auto text = policy.mode == filter_mode::disabled ? _("Device-type filter disabled")
+                          : policy.entries.empty()               ? _("Device-type filter: all devices denied")
+                          : _("Device-type filter updated");
+                set_status_text(text);
+        }
 }
 
 /*
@@ -1172,10 +1212,25 @@ void MainFrame::add_exported_devices(wxCommandEvent&)
                 return;
         }
 
-        auto persistent = get_persistent();
+                auto persistent = get_persistent();
         auto saved = as_set(get_saved());
 
-        auto dev = [this, host = std::move(u8_host), port = std::move(u8_port), &persistent, &saved] (auto, auto &device)
+        // Read the device-type filter so we can flag devices that the driver would block (UX only;
+        // the driver remains the real gate). Failure to read leaves pre-filtering disabled.
+        std::optional<device_filter_policy> policy;
+        if (auto h = vhci::open()) {
+                policy = vhci::get_device_filter(h.get());
+        }
+
+        struct pending_dev
+        {
+                device_columns dc;
+                UINT8 cls, sub, proto;
+                std::vector<std::array<UINT8, 3>> ifaces;
+        };
+        std::vector<pending_dev> pend;
+
+        auto dev = [this, host = std::move(u8_host), port = std::move(u8_port), &persistent, &saved, &pend] (auto, auto &device)
         {
                 device_state state {
                         .device = make_imported_device(std::move(host), std::move(port), device),
@@ -1190,17 +1245,65 @@ void MainFrame::add_exported_devices(wxCommandEvent&)
                 }
 
                 update_device(item, dc, flags);
+
+                pend.push_back(pending_dev{ dc, device.bDeviceClass, device.bDeviceSubClass, device.bDeviceProtocol, {} });
         };
 
-        auto intf = [this] (auto /*dev_idx*/, auto& /*dev*/, auto /*idx*/, auto& /*intf*/) {};
+        auto intf = [&pend] (auto dev_idx, auto&, auto, auto &intf)
+        {
+                if (auto i = size_t(dev_idx); i < pend.size()) {
+                        pend[i].ifaces.push_back({ intf.bInterfaceClass, intf.bInterfaceSubClass, intf.bInterfaceProtocol });
+                }
+        };
 
         if (!enum_exportable_devices(sock.get(), dev, intf)) {
                 auto err = GetLastError();
                 wxLogError(_("enum_exportable_devices error %lu\n%s"), err, GetLastErrorMsg(err));
+                return;
         } else if (cb.FindString(host) != wxNOT_FOUND) {
                 // already exists
         } else if (auto pos = cb.Append(host); cb.GetCount() > 32) {
                 cb.Delete(pos > 0 ? --pos : ++pos);
+        }
+
+        if (!policy || policy->mode != filter_mode::whitelist) {
+                return; // filtering disabled: nothing to flag
+        }
+
+        auto allowed = [&p = *policy] (UINT8 c, UINT8 s, UINT8 pr) {
+                for (auto &e: p.entries) {
+                        if ((e.match_flags & filter_match_class)    && e.bClass    != c)  { continue; }
+                        if ((e.match_flags & filter_match_subclass) && e.bSubClass != s)  { continue; }
+                        if ((e.match_flags & filter_match_protocol) && e.bProtocol != pr) { continue; }
+                        return true;
+                }
+                return false;
+        };
+
+        for (auto &pd: pend) {
+                wxString reason;
+
+                if (pd.cls && pd.cls != 0xEF && !allowed(pd.cls, pd.sub, pd.proto)) {
+                        reason = wxString::Format(_("Blocked: device class %02X"), pd.cls);
+                } else {
+                        for (auto &i: pd.ifaces) {
+                                if (!allowed(i[0], i[1], i[2])) {
+                                        reason = wxString::Format(_("Blocked: interface class %02X"), i[0]);
+                                        break;
+                                }
+                        }
+                }
+
+                if (reason.empty()) {
+                        continue;
+                }
+
+                auto dc = pd.dc;
+                dc[COL_NOTES] = reason;
+
+                if (auto [item, added] = find_or_add_device(dc); item.IsOk()) {
+                        update_device(item, dc, mkflag(COL_NOTES));
+                }
         }
 }
 

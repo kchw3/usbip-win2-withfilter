@@ -81,7 +81,11 @@ struct device_filter_entry
         UINT8 bProtocol{};
         UINT8 match_flags{}; // bitmask of filter_match_flags
 
-        bool operator==(const device_filter_entry&) const = default;
+        bool operator==(const device_filter_entry &o) const // keep C++17-compatible (see libusbip_check)
+        {
+                return bClass == o.bClass && bSubClass == o.bSubClass &&
+                       bProtocol == o.bProtocol && match_flags == o.match_flags;
+        }
 };
 
 struct device_filter_policy

@@ -380,7 +380,7 @@ std::optional<usbip::device_filter_policy> usbip::vhci::get_device_filter(_In_ H
         r = reinterpret_cast<ioctl::device_filter*>(buf.data());
 
         device_filter_policy policy;
-        policy.mode = r->mode == vhci::filter_mode::disabled ? filter_mode::disabled : filter_mode::whitelist;
+        policy.mode = r->mode == vhci::filter_mode::disabled ? usbip::filter_mode::disabled : usbip::filter_mode::whitelist;
 
         auto avail = (buf.size() - entries_offset) / sizeof(*r->entries);
         auto cnt = r->count < avail ? r->count : avail;
@@ -388,7 +388,7 @@ std::optional<usbip::device_filter_policy> usbip::vhci::get_device_filter(_In_ H
         policy.entries.reserve(cnt);
         for (size_t i = 0; i < cnt; ++i) {
                 auto &s = r->entries[i];
-                policy.entries.push_back(device_filter_entry{ s.bClass, s.bSubClass, s.bProtocol, s.match_flags });
+                policy.entries.push_back(usbip::device_filter_entry{ s.bClass, s.bSubClass, s.bProtocol, s.match_flags });
         }
 
         result = std::move(policy);
@@ -403,11 +403,11 @@ bool usbip::vhci::set_device_filter(_In_ HANDLE dev, _In_ const device_filter_po
                 return false;
         }
 
-        std::vector<char> buf(ioctl::device_filter_size(cnt ? cnt : 1));
+        std::vector<char> buf(ioctl::device_filter_size(static_cast<ULONG>(cnt ? cnt : 1)));
         auto r = reinterpret_cast<ioctl::device_filter*>(buf.data());
 
         r->size = sizeof(*r);
-        r->mode = policy.mode == filter_mode::disabled ? vhci::filter_mode::disabled : vhci::filter_mode::whitelist;
+        r->mode = policy.mode == usbip::filter_mode::disabled ? vhci::filter_mode::disabled : vhci::filter_mode::whitelist;
         r->count = static_cast<ULONG>(cnt); // r->reserved is already zero (buf is zero-initialized)
 
         for (size_t i = 0; i < cnt; ++i) {

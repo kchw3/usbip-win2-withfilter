@@ -84,6 +84,37 @@ struct imported_device : imported_device_location, imported_device_properties {}
 enum class state { unplugged, connecting, connected, plugged, disconnected, unplugging };
 
 /*
+ * Device-type filter (whitelist) policy.
+ *
+ * The policy is a list of allowed USB class "tuples". A device is allowed to attach
+ * only if every class token it exposes is matched by some entry in the list, where a
+ * token is the device-descriptor class (when meaningful) and the class of every
+ * interface in every configuration. @see usbip::vhci::ioctl::device_filter
+ */
+enum class filter_mode : UINT8 {
+        disabled, // filtering is off, every device is allowed
+        whitelist, // only devices whose every class token matches an entry are allowed
+};
+
+enum filter_match_flags : UINT8 {
+        FILTER_MATCH_CLASS    = 1, // bClass is significant
+        FILTER_MATCH_SUBCLASS = 2, // bSubClass is significant
+        FILTER_MATCH_PROTOCOL = 4, // bProtocol is significant
+};
+
+/*
+ * A single whitelist entry. Only the fields flagged in match_flags are compared;
+ * e.g. {bClass = 0x03, match_flags = FILTER_MATCH_CLASS} allows the whole HID class.
+ */
+struct device_filter_entry
+{
+        UINT8 bClass;
+        UINT8 bSubClass;
+        UINT8 bProtocol;
+        UINT8 match_flags; // bitmask of filter_match_flags
+};
+
+/*
  * There can be multiple event sources for one device,
  * each of them emits events with a unique source_id.
  */
@@ -105,10 +136,12 @@ enum class function { // 12 bit
         get_imported_devices,
         set_persistent,
         get_persistent,
-        stop_attach_attempts,
+                stop_attach_attempts,
         plugin_hardware_once,
         plugout_hardware_and_reattach,
-};
+        set_device_filter,
+        get_device_filter,
+};;
 
 constexpr auto make(function id)
 {
@@ -122,9 +155,13 @@ enum {
         SET_PERSISTENT = make(function::set_persistent),
         GET_PERSISTENT = make(function::get_persistent),
         STOP_ATTACH_ATTEMPTS = make(function::stop_attach_attempts),
-        PLUGIN_HARDWARE_ONCE = make(function::plugin_hardware_once),
+                PLUGIN_HARDWARE_ONCE = make(function::plugin_hardware_once),
         PLUGOUT_HARDWARE_AND_REATTACH = make(function::plugout_hardware_and_reattach), // for internal use only
+        SET_DEVICE_FILTER = make(function::set_device_filter),
+        GET_DEVICE_FILTER = make(function::get_device_filter),
 };
+
+enum { MAX_DEVICE_FILTER_ENTRIES = 64 };;
 
 struct plugin_hardware : base, imported_device_location
 {
@@ -151,6 +188,25 @@ struct get_imported_devices : base
 constexpr auto get_imported_devices_size(_In_ ULONG n)
 {
         return offsetof(get_imported_devices, devices) + n*sizeof(*get_imported_devices::devices);
+}
+
+/*
+ * SET_DEVICE_FILTER (input) / GET_DEVICE_FILTER (output).
+ *
+ * Whitelist policy used by the driver to decide whether a device may be attached.
+ * @see SET_DEVICE_FILTER, GET_DEVICE_FILTER
+ */
+struct device_filter : base
+{
+        filter_mode mode;
+        UINT8 reserved[3];
+        ULONG count; // number of valid entries, <= MAX_DEVICE_FILTER_ENTRIES
+        device_filter_entry entries[ANYSIZE_ARRAY];
+};
+
+constexpr auto device_filter_size(_In_ ULONG n)
+{
+        return offsetof(device_filter, entries) + n*sizeof(*device_filter::entries);
 }
 
 } // namespace usbip::vhci::ioctl

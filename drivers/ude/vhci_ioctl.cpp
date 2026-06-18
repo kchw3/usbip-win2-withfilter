@@ -12,6 +12,7 @@
 #include "network.h"
 #include "ioctl.h"
 #include "persistent.h"
+#include "device_filter.h"
 
 #include <usbip\proto_op.h>
 
@@ -149,13 +150,20 @@ PAGED auto import_remote_device(_Inout_ device_ctx_ext &ext)
         auto &udev = reply.udev; 
         log(udev);
 
-        {
+                {
                 auto &p = ext.properties();
 
                 p.devid = make_devid(static_cast<UINT16>(udev.busnum), static_cast<UINT16>(udev.devnum));
                 p.speed = static_cast<usb_device_speed>(udev.speed);
                 p.vendor = udev.idVendor;
                 p.product = udev.idProduct;
+        }
+
+        // Device-type filter: reject disallowed devices before the UDECXUSBDEVICE is created
+        // and plugged in, so a blocked device is never presented to Windows. The check may
+        // fetch configuration descriptor(s) over ext.sock (the connection is already up).
+        if (auto err = device_filter::check_device(ext, udev)) {
+                return err;
         }
 
         return STATUS_SUCCESS;
@@ -783,8 +791,79 @@ PAGED auto get_persistent(_In_ WDFREQUEST request)
                 actual = 0;
         }
 
-        WdfRequestSetInformation(request, actual);
+                WdfRequestSetInformation(request, actual);
         return st;
+}
+
+/*
+ * Store the device-type filter (whitelist) policy.
+ */
+_IRQL_requires_same_
+_IRQL_requires_(PASSIVE_LEVEL)
+PAGED NTSTATUS set_device_filter(_In_ WDFREQUEST request)
+{
+        PAGED_CODE();
+        vhci::ioctl::device_filter *r{};
+
+        if (size_t length;
+            auto err = WdfRequestRetrieveInputBuffer(request, sizeof(*r), reinterpret_cast<PVOID*>(&r), &length)) {
+                return err;
+        } else if (r->size != sizeof(*r)) {
+                Trace(TRACE_LEVEL_ERROR, "device_filter.size %lu != sizeof(device_filter) %Iu", r->size, sizeof(*r));
+                return USBIP_ERROR_ABI;
+        } else if (auto avail = (length - offsetof(vhci::ioctl::device_filter, entries)) / sizeof(*r->entries);
+                   r->count > avail) {
+                return STATUS_INVALID_BUFFER_SIZE;
+        } else if (r->count > vhci::ioctl::MAX_DEVICE_FILTER_ENTRIES) {
+                return STATUS_INVALID_PARAMETER;
+        }
+
+        device_filter::policy p{};
+        p.mode = r->mode;
+        p.count = r->count;
+        RtlCopyMemory(p.entries, r->entries, r->count * sizeof(*r->entries));
+
+        return device_filter::store(p);
+}
+
+/*
+ * Return the device-type filter (whitelist) policy.
+ */
+_IRQL_requires_same_
+_IRQL_requires_(PASSIVE_LEVEL)
+PAGED NTSTATUS get_device_filter(_In_ WDFREQUEST request)
+{
+        PAGED_CODE();
+        WdfRequestSetInformation(request, 0);
+
+        size_t outlen;
+        vhci::ioctl::device_filter *r;
+
+        if (auto err = WdfRequestRetrieveOutputBuffer(request, sizeof(*r), reinterpret_cast<PVOID*>(&r), &outlen)) {
+                return err;
+        } else if (r->size != sizeof(*r)) {
+                Trace(TRACE_LEVEL_ERROR, "device_filter.size %lu != sizeof(device_filter) %Iu", r->size, sizeof(*r));
+                return USBIP_ERROR_ABI;
+        }
+
+        device_filter::policy p;
+        device_filter::load(p);
+
+        auto avail = (outlen - offsetof(vhci::ioctl::device_filter, entries)) / sizeof(*r->entries);
+        if (p.count > avail) {
+                return STATUS_BUFFER_TOO_SMALL;
+        }
+
+        r->mode = p.mode;
+        RtlZeroMemory(r->reserved, sizeof(r->reserved));
+        r->count = p.count;
+        RtlCopyMemory(r->entries, p.entries, p.count * sizeof(*r->entries));
+
+        auto written = vhci::ioctl::device_filter_size(p.count);
+        NT_ASSERT(written <= outlen);
+        WdfRequestSetInformation(request, written);
+
+        return STATUS_SUCCESS;
 }
 
 /*
@@ -875,8 +954,12 @@ PAGED decltype(get_persistent) *get_parallel_handler(_In_ ULONG IoControlCode)
                 return set_persistent;
         case vhci::ioctl::GET_PERSISTENT:
                 return get_persistent;
-        case vhci::ioctl::STOP_ATTACH_ATTEMPTS:
+                case vhci::ioctl::STOP_ATTACH_ATTEMPTS:
                 return stop_attach_attempts;
+        case vhci::ioctl::SET_DEVICE_FILTER:
+                return set_device_filter;
+        case vhci::ioctl::GET_DEVICE_FILTER:
+                return get_device_filter;
         default:
                 return nullptr;
         }

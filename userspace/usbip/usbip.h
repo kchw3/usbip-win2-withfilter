@@ -6,6 +6,7 @@
 
 #include <string>
 #include <set>
+#include <vector>
 
 #include <libusbip\remote.h>
 
@@ -65,5 +66,17 @@ struct port_args
         bool persistent{};
 };
 command_t cmd_port;
+
+struct filter_args
+{
+        // --allow <category,...> : replace the whitelist with these device-type categories
+        std::vector<std::string> categories;
+
+        bool show{};            // --show (default action)
+        bool list_categories{}; // --list-categories
+        bool disable{};         // --disable: turn filtering off (allow all)
+        bool deny_all{};        // --deny-all: enable whitelist with no entries (deny all)
+};
+command_t cmd_filter;
 
 } // namespace usbip

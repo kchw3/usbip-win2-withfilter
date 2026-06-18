@@ -46,7 +46,7 @@ StartType      = 3               ; SERVICE_DEMAND_START
 ErrorControl   = 1               ; SERVICE_ERROR_NORMAL
 ServiceBinary  = %13%\usbip2_ude.sys ; Driver package isolation
 Dependencies   = ucx01000, udecx, tcpip
-AddReg         = ude_Device_Service_AddReg
+AddReg         = ude_Device_Service_AddReg, ude_EventLog_AddReg
 
 [ude_Device_Service_AddReg]
 
@@ -78,6 +78,18 @@ HKR, Parameters, TCP_KEEPINTVL, %REG_DWORD%, 10
 HKR, Parameters, ReattachMaxAttempts, %REG_DWORD%, 20
 HKR, Parameters, ReattachFirstDelay, %REG_DWORD%, 30 ; seconds
 HKR, Parameters, ReattachMaxDelay, %REG_DWORD%, 480 ; seconds
+
+; The device-type filter (whitelist) policy is stored under Parameters\DeviceFilter
+; (REG_BINARY) and is written/read via the SET_DEVICE_FILTER / GET_DEVICE_FILTER IOCTLs.
+; It is intentionally not seeded here: with no value present the driver fails closed
+; (empty whitelist => every device is denied until an administrator configures it).
+
+; Register the driver as a System event-log source so device-type filter rejections are
+; recorded in the Windows event log. NOTE: formatted descriptions require a message
+; catalog embedded in the driver binary (follow-up); until then Event Viewer shows the
+; rejection details from the inserted string.
+[ude_EventLog_AddReg]
+HKLM, "SYSTEM\CurrentControlSet\Services\EventLog\System\usbip2_ude", TypesSupported, %REG_DWORD%, 7
 
 [Strings]
 Manufacturer = "USBIP-WIN2"

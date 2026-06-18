@@ -176,9 +176,10 @@
     <ClCompile Include="strings.cpp" />
     <ClCompile Include="usbip.cpp" />
     <ClCompile Include="attach.cpp" />
-    <ClCompile Include="detach.cpp" />
+        <ClCompile Include="detach.cpp" />
     <ClCompile Include="list.cpp" />
     <ClCompile Include="port.cpp" />
+    <ClCompile Include="filter.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="strings.h" />

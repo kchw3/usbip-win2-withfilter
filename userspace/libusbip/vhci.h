@@ -59,10 +59,57 @@ struct device_state
         ULONG source_id;
 };
 
+/*
+ * Device-type (USB class) filter policy mirrored from the driver ABI.
+ * @see usbip::vhci::ioctl::device_filter
+ */
+enum class filter_mode {
+        disabled,  // filtering off, every device is allowed
+        whitelist, // only devices whose every class token matches an entry are allowed
+};
+
+enum filter_match_flags : unsigned char {
+        filter_match_class    = 1,
+        filter_match_subclass = 2,
+        filter_match_protocol = 4,
+};
+
+struct device_filter_entry
+{
+        UINT8 bClass{};
+        UINT8 bSubClass{};
+        UINT8 bProtocol{};
+        UINT8 match_flags{}; // bitmask of filter_match_flags
+
+        auto operator==(const device_filter_entry&) const = default;
+};
+
+struct device_filter_policy
+{
+        filter_mode mode = filter_mode::whitelist;
+        std::vector<device_filter_entry> entries;
+};
+
+/*
+ * A user-facing device-type category (e.g. "Mass storage") that expands to one or more
+ * whitelist entries. Shared by the GUI and CLI so they present the same choices.
+ */
+struct device_type_category
+{
+        std::string id;   // stable identifier, e.g. "mass_storage"
+        std::string name; // display name, e.g. "Mass storage (USB drives)"
+        std::vector<device_filter_entry> entries;
+};
+
+/**
+ * @return the well-known device-type categories, in display order.
+ */
+USBIP_API const std::vector<device_type_category>& device_type_categories();
+
 /**
  * @return max length of usb device serial number, constant
  */
-USBIP_API int get_device_serial_maxlen() noexcept;
+USBIP_API int get_device_serial_maxlen() noexcept;;
 
 /**
  * Serial number must contain no more than N alphanumeric ASCII characters.
@@ -96,6 +143,21 @@ USBIP_API Handle open(_In_ bool overlapped = false);
  * @return imported devices if the result contains a value, otherwise call GetLastError()
  */
 USBIP_API std::optional<std::vector<imported_device>> get_imported_devices(_In_ HANDLE dev);
+
+/**
+ * Read the device-type filter (whitelist) policy from the driver.
+ * @param dev handle of the driver device
+ * @return policy if the result contains a value, otherwise call GetLastError()
+ */
+USBIP_API std::optional<device_filter_policy> get_device_filter(_In_ HANDLE dev);
+
+/**
+ * Write the device-type filter (whitelist) policy to the driver. Requires administrator rights.
+ * @param dev handle of the driver device
+ * @param policy whitelist policy to store
+ * @return call GetLastError() if false is returned
+ */
+USBIP_API bool set_device_filter(_In_ HANDLE dev, _In_ const device_filter_policy &policy);;
 
 
 /**

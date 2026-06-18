@@ -111,10 +111,12 @@ private:
 	void on_view_labels(wxCommandEvent &event) override;
 	void on_view_labels_update_ui(wxUpdateUIEvent &event) override;
 
-        void on_edit_device_update_ui(wxUpdateUIEvent &event) override;
+                void on_edit_device_update_ui(wxUpdateUIEvent &event) override;
         void on_edit_notes(wxCommandEvent &event) override;
         void on_edit_serial(wxCommandEvent &event) override;
         void on_edit_gen_serial(wxCommandEvent &event) override;
+
+        void on_edit_device_filter(wxCommandEvent &event); // device-type whitelist dialog;
 
         void on_frame_mouse_wheel(wxMouseEvent &event) override;
 

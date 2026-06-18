@@ -15,3 +15,4 @@ ARM64
 /userspace/resources/MSG*.bin
 /userspace/wusbip/vcpkg_installed
 usbip-win2-withfilter.v1.diff
+DEVICE_TYPE_FILTER_NOTES.md

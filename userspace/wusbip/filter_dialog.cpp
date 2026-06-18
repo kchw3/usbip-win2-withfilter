@@ -63,7 +63,7 @@ FilterDialog::FilterDialog(_In_ wxWindow *parent, _In_ const usbip::device_filte
 
         wxArrayString names;
         for (auto &c: m_categories) {
-                names.Add(c.name);
+                names.Add(wxString::FromUTF8(c.name));
         }
 
         m_list = new wxCheckListBox(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, names);

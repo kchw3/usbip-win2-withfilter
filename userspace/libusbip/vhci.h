@@ -81,7 +81,7 @@ struct device_filter_entry
         UINT8 bProtocol{};
         UINT8 match_flags{}; // bitmask of filter_match_flags
 
-        auto operator==(const device_filter_entry&) const = default;
+        bool operator==(const device_filter_entry&) const = default;
 };
 
 struct device_filter_policy

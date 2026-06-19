@@ -59,7 +59,47 @@ bool is_allowed(_In_ const policy &p, _In_ UINT8 cls, _In_ UINT8 sub, _In_ UINT8
 }
 
 /*
+ * Human-readable name for a USB base class code (bDeviceClass / bInterfaceClass), so that
+ * an admin reading the event log sees e.g. "class 08 (Mass Storage)" instead of a bare
+ * number. Returns "Unknown" for codes that are not well-known base classes.
+ */
+_IRQL_requires_same_
+_IRQL_requires_max_(DISPATCH_LEVEL)
+const char *usb_class_name(_In_ UINT8 cls)
+{
+        switch (cls) {
+        case 0x00: return "per-interface";
+        case 0x01: return "Audio";
+        case 0x02: return "Communications/CDC";
+        case 0x03: return "HID";
+        case 0x05: return "Physical";
+        case 0x06: return "Image";
+        case 0x07: return "Printer";
+        case 0x08: return "Mass Storage";
+        case 0x09: return "Hub";
+        case 0x0A: return "CDC-Data";
+        case 0x0B: return "Smart Card";
+        case 0x0D: return "Content Security";
+        case 0x0E: return "Video";
+        case 0x0F: return "Personal Healthcare";
+        case 0x10: return "Audio/Video";
+        case 0x11: return "Billboard";
+        case 0x12: return "USB Type-C Bridge";
+        case 0xDC: return "Diagnostic";
+        case 0xE0: return "Wireless Controller";
+        case 0xEF: return "Miscellaneous";
+        case 0xFE: return "Application Specific";
+        case 0xFF: return "Vendor Specific";
+        default:   return "Unknown";
+        }
+}
+
+/*
  * Write an admin-visible Windows System Event Log entry plus a verbose WPP trace.
+ * Both records carry the remote endpoint, the device VID/PID, the offending class triple
+ * (with its human-readable class name) and the reason, so a rejection can be diagnosed
+ * from either the event log or a WPP trace without cross-referencing.
+ *
  * @param ifnum interface number, or -1 for device-level / global reasons
  */
 _IRQL_requires_same_
@@ -69,13 +109,14 @@ void report_rejection(
         _In_ int ifnum, _In_ UINT8 cls, _In_ UINT8 sub, _In_ UINT8 proto)
 {
         Trace(TRACE_LEVEL_ERROR,
-                "device-type filter REJECT %!USTR!:%!USTR!/%!USTR! vid %#06x pid %#06x, reason '%s', "
-                "interface %d, class/sub/proto %02x/%02x/%02x",
+                "device-type filter REJECT %!USTR!:%!USTR!/%!USTR! VID_%04X&PID_%04X, "
+                "%s, class/sub/proto %02X/%02X/%02X (%s), interface %d",
                 ext.node_name(), ext.service_name(), ext.busid(), udev.idVendor, udev.idProduct,
-                reason, ifnum, cls, sub, proto);
+                reason, cls, sub, proto, usb_class_name(cls), ifnum);
 
         auto drvobj = WdfDriverWdmGetDriverObject(WdfGetDriver());
         if (!drvobj) {
+                Trace(TRACE_LEVEL_WARNING, "no WDM driver object, event-log entry skipped");
                 return;
         }
 
@@ -83,14 +124,22 @@ void report_rejection(
         constexpr USHORT max_str_bytes = ERROR_LOG_MAXIMUM_SIZE - sizeof(IO_ERROR_LOG_PACKET);
         constexpr size_t max_chars = max_str_bytes / sizeof(WCHAR);
 
+        // Interface fragment only when an interface is the cause; device-level reasons omit it.
+        WCHAR ifrag[24] = L"";
+        if (ifnum >= 0) {
+                RtlStringCchPrintfW(ifrag, RTL_NUMBER_OF(ifrag), L"interface %d, ", ifnum);
+        }
+
         WCHAR msg[max_chars];
         auto st = RtlStringCchPrintfW(msg, RTL_NUMBER_OF(msg),
-                L"Blocked VID_%04X&PID_%04X iface %d class %02X/%02X/%02X",
-                udev.idVendor, udev.idProduct, ifnum, cls, sub, proto);
+                L"Blocked VID_%04X&PID_%04X on %wZ (%wZ): %hs (%sclass %02X/%02X/%02X %hs)",
+                udev.idVendor, udev.idProduct, ext.node_name(), ext.busid(),
+                reason, ifrag, cls, sub, proto, usb_class_name(cls));
 
         if (st == STATUS_BUFFER_OVERFLOW) {
                 msg[RTL_NUMBER_OF(msg) - 1] = L'\0'; // truncated copy is fine for logging
         } else if (NT_ERROR(st)) {
+                Trace(TRACE_LEVEL_WARNING, "format event-log string %!STATUS!, entry skipped", st);
                 return;
         }
 
@@ -104,6 +153,7 @@ void report_rejection(
 
         auto entry = static_cast<PIO_ERROR_LOG_PACKET>(IoAllocateErrorLogEntry(drvobj, static_cast<UCHAR>(size)));
         if (!entry) {
+                Trace(TRACE_LEVEL_WARNING, "IoAllocateErrorLogEntry(%u bytes) failed, event-log entry skipped", size);
                 return;
         }
 
@@ -158,40 +208,51 @@ PAGED NTSTATUS get_descriptor(
 
         byteswap_header(hdr, swap_dir::host2net);
 
+        TraceDbg("%!USTR!: GET_DESCRIPTOR type %#x index %u, requesting %u bytes (seqnum %lu)",
+                ext.busid(), type, index, len, hdr.seqnum);
+
         if (auto err = send(ext.sock, memory::stack, &hdr, sizeof(hdr))) {
-                Trace(TRACE_LEVEL_ERROR, "send CMD_SUBMIT %!STATUS!", err);
+                Trace(TRACE_LEVEL_ERROR, "%!USTR!: send CMD_SUBMIT GET_DESCRIPTOR(type %#x index %u) %!STATUS!",
+                        ext.busid(), type, index, err);
                 return err;
         }
 
         header rep{};
         if (auto err = recv(ext.sock, memory::stack, &rep, sizeof(rep))) {
-                Trace(TRACE_LEVEL_ERROR, "recv RET_SUBMIT header %!STATUS!", err);
+                Trace(TRACE_LEVEL_ERROR, "%!USTR!: recv RET_SUBMIT header for GET_DESCRIPTOR(type %#x index %u) %!STATUS!",
+                        ext.busid(), type, index, err);
                 return err;
         }
         byteswap_header(rep, swap_dir::net2host);
 
         if (rep.command != RET_SUBMIT) {
-                Trace(TRACE_LEVEL_ERROR, "unexpected command %#x", rep.command);
+                Trace(TRACE_LEVEL_ERROR, "%!USTR!: expected RET_SUBMIT, got command %#x (GET_DESCRIPTOR type %#x index %u)",
+                        ext.busid(), rep.command, type, index);
                 return USBIP_ERROR_PROTOCOL;
         }
 
         if (auto status = rep.ret_submit.status) {
-                Trace(TRACE_LEVEL_ERROR, "RET_SUBMIT status %d", status);
+                Trace(TRACE_LEVEL_ERROR, "%!USTR!: GET_DESCRIPTOR(type %#x index %u) RET_SUBMIT status %d (device stalled/errored)",
+                        ext.busid(), type, index, status);
                 return USBIP_ERROR_GENERAL;
         }
 
         auto n = rep.ret_submit.actual_length;
         if (n < 0 || static_cast<ULONG>(n) > len) {
-                Trace(TRACE_LEVEL_ERROR, "bad actual_length %d (len %u)", n, len);
+                Trace(TRACE_LEVEL_ERROR, "%!USTR!: GET_DESCRIPTOR(type %#x index %u) bad actual_length %d (requested %u)",
+                        ext.busid(), type, index, n, len);
                 return USBIP_ERROR_PROTOCOL;
         }
 
         if (n) {
                 if (auto err = recv(ext.sock, pool, buf, static_cast<ULONG>(n))) {
-                        Trace(TRACE_LEVEL_ERROR, "recv descriptor payload %!STATUS!", err);
+                        Trace(TRACE_LEVEL_ERROR, "%!USTR!: recv GET_DESCRIPTOR(type %#x index %u) payload of %d bytes %!STATUS!",
+                                ext.busid(), type, index, n, err);
                         return err;
                 }
         }
+
+        TraceDbg("%!USTR!: GET_DESCRIPTOR type %#x index %u returned %d bytes", ext.busid(), type, index, n);
 
         actual = static_cast<UINT16>(n);
         return STATUS_SUCCESS;
@@ -209,12 +270,14 @@ PAGED NTSTATUS check_configuration(
 {
         PAGED_CODE();
 
+        TraceDbg("%!USTR!: evaluating configuration %u of %u", ext.busid(), cfg_index, udev.bNumConfigurations);
+
         USB_CONFIGURATION_DESCRIPTOR head{};
         UINT16 got{};
 
         if (auto err = get_descriptor(ext, seqnum, USB_CONFIGURATION_DESCRIPTOR_TYPE, cfg_index,
                                       memory::stack, &head, sizeof(head), got)) {
-                report_rejection(ext, udev, "config descriptor fetch failed", -1, 0, 0, 0);
+                report_rejection(ext, udev, "config descriptor header fetch failed", -1, 0, 0, 0);
                 return USBIP_ERROR_DEVICE_FILTERED;
         }
 
@@ -249,6 +312,7 @@ PAGED NTSTATUS check_configuration(
 
         auto base = buf.get<UCHAR>();
         auto end = base + full;
+        unsigned interfaces = 0;
 
         for (auto cur = base; cur + sizeof(USB_COMMON_DESCRIPTOR) <= end; ) {
 
@@ -263,6 +327,7 @@ PAGED NTSTATUS check_configuration(
                     d->bLength >= sizeof(USB_INTERFACE_DESCRIPTOR)) {
 
                         auto &id = *reinterpret_cast<USB_INTERFACE_DESCRIPTOR*>(d);
+                        ++interfaces;
 
                         if (!is_allowed(p, id.bInterfaceClass, id.bInterfaceSubClass, id.bInterfaceProtocol)) {
                                 report_rejection(ext, udev, "interface class not in whitelist",
@@ -271,13 +336,15 @@ PAGED NTSTATUS check_configuration(
                                 return USBIP_ERROR_DEVICE_FILTERED;
                         }
 
-                        TraceDbg("device-type filter: interface %d class/sub/proto %02x/%02x/%02x allowed",
-                                id.bInterfaceNumber, id.bInterfaceClass, id.bInterfaceSubClass,
-                                id.bInterfaceProtocol);
+                        TraceDbg("%!USTR!: config %u interface %d class/sub/proto %02X/%02X/%02X (%s) allowed",
+                                ext.busid(), cfg_index, id.bInterfaceNumber, id.bInterfaceClass,
+                                id.bInterfaceSubClass, id.bInterfaceProtocol, usb_class_name(id.bInterfaceClass));
                 }
 
                 cur += d->bLength;
         }
+
+        TraceDbg("%!USTR!: configuration %u passed (%u interface(s) checked)", ext.busid(), cfg_index, interfaces);
 
         return STATUS_SUCCESS;
 }
@@ -383,9 +450,17 @@ PAGED NTSTATUS usbip::device_filter::check_device(_Inout_ device_ctx_ext &ext, _
         load(p);
 
         if (p.mode == vhci::filter_mode::disabled) {
-                TraceDbg("device-type filter disabled, allow");
+                TraceDbg("%!USTR!:%!USTR!/%!USTR! VID_%04X&PID_%04X: device-type filter disabled, allow",
+                        ext.node_name(), ext.service_name(), ext.busid(), udev.idVendor, udev.idProduct);
                 return STATUS_SUCCESS;
         }
+
+        Trace(TRACE_LEVEL_INFORMATION,
+                "device-type filter: evaluating %!USTR!:%!USTR!/%!USTR! VID_%04X&PID_%04X "
+                "(device class %02X/%02X/%02X %s, %u config(s)) against whitelist of %lu entrie(s)",
+                ext.node_name(), ext.service_name(), ext.busid(), udev.idVendor, udev.idProduct,
+                udev.bDeviceClass, udev.bDeviceSubClass, udev.bDeviceProtocol, usb_class_name(udev.bDeviceClass),
+                udev.bNumConfigurations, p.count);
 
         // Device-descriptor class token (skip 0x00 = defined per interface, 0xEF = composite glue).
         if (udev.bDeviceClass && udev.bDeviceClass != 0xEF) {
@@ -409,8 +484,10 @@ PAGED NTSTATUS usbip::device_filter::check_device(_Inout_ device_ctx_ext &ext, _
                 }
         }
 
-        Trace(TRACE_LEVEL_INFORMATION, "device-type filter: %!USTR!/%!USTR! allowed (vid %#06x pid %#06x)",
-                ext.node_name(), ext.busid(), udev.idVendor, udev.idProduct);
+        Trace(TRACE_LEVEL_INFORMATION,
+                "device-type filter: %!USTR!:%!USTR!/%!USTR! VID_%04X&PID_%04X ALLOWED (all %u config(s) passed the whitelist)",
+                ext.node_name(), ext.service_name(), ext.busid(), udev.idVendor, udev.idProduct,
+                udev.bNumConfigurations);
 
         return STATUS_SUCCESS;
 }

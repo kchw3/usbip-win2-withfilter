@@ -187,8 +187,13 @@ void report_rejection(
                 return;
         }
 
+        // IO_ERROR_LOG_PACKET ends with "ULONG DumpData[1]"; with no dump data the strings
+        // start at FIELD_OFFSET(..., DumpData), not sizeof(IO_ERROR_LOG_PACKET) (which counts
+        // that placeholder element). Getting this wrong leaves %1 unresolved in the event log.
+        constexpr USHORT header_size = FIELD_OFFSET(IO_ERROR_LOG_PACKET, DumpData);
+
         // Keep the inserted string within ERROR_LOG_MAXIMUM_SIZE.
-        constexpr USHORT max_str_bytes = ERROR_LOG_MAXIMUM_SIZE - sizeof(IO_ERROR_LOG_PACKET);
+        constexpr USHORT max_str_bytes = ERROR_LOG_MAXIMUM_SIZE - header_size;
         constexpr size_t max_chars = max_str_bytes / sizeof(WCHAR);
 
         // Interface fragment only when an interface is the cause; device-level reasons omit it.
@@ -216,7 +221,7 @@ void report_rejection(
         }
 
         auto slen = static_cast<USHORT>((cch + 1) * sizeof(WCHAR));
-        auto size = static_cast<USHORT>(sizeof(IO_ERROR_LOG_PACKET) + slen);
+        auto size = static_cast<USHORT>(header_size + slen);
 
         auto entry = static_cast<PIO_ERROR_LOG_PACKET>(IoAllocateErrorLogEntry(drvobj, static_cast<UCHAR>(size)));
         if (!entry) {
@@ -227,8 +232,8 @@ void report_rejection(
         RtlZeroMemory(entry, size);
         entry->ErrorCode = USBIP_ERROR_DEVICE_FILTERED;
         entry->NumberOfStrings = 1;
-        entry->StringOffset = sizeof(IO_ERROR_LOG_PACKET);
         entry->DumpDataSize = 0;
+        entry->StringOffset = header_size; // == FIELD_OFFSET(IO_ERROR_LOG_PACKET, DumpData) + DumpDataSize
         RtlCopyMemory(reinterpret_cast<PUCHAR>(entry) + entry->StringOffset, msg, slen);
 
         IoWriteErrorLogEntry(entry);

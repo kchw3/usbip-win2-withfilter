@@ -100,14 +100,14 @@ const char *usb_class_name(_In_ UINT8 cls)
  */
 _IRQL_requires_same_
 _IRQL_requires_max_(DISPATCH_LEVEL)
-void format_match_field(_In_ bool matched, _In_ UINT8 v, _Out_writes_z_(3) char *out)
+void format_match_field(_In_ bool matched, _In_ UINT8 v, _Out_writes_z_(3) WCHAR *out)
 {
         if (matched) {
-                RtlStringCchPrintfA(out, 3, "%02X", v);
+                RtlStringCchPrintfW(out, 3, L"%02X", v);
         } else {
-                out[0] = '*';
-                out[1] = '*';
-                out[2] = '\0';
+                out[0] = L'*';
+                out[1] = L'*';
+                out[2] = L'\0';
         }
 }
 
@@ -120,39 +120,39 @@ void format_match_field(_In_ bool matched, _In_ UINT8 v, _Out_writes_z_(3) char 
  */
 _IRQL_requires_same_
 _IRQL_requires_max_(DISPATCH_LEVEL)
-void format_whitelist(_In_ const policy &p, _Out_writes_z_(cch) char *buf, _In_ size_t cch)
+void format_whitelist(_In_ const policy &p, _Out_writes_z_(cch) WCHAR *buf, _In_ size_t cch)
 {
         if (!p.count) {
-                RtlStringCchCopyA(buf, cch, "(empty)");
+                RtlStringCchCopyW(buf, cch, L"(empty)");
                 return;
         }
 
-        buf[0] = '\0';
+        buf[0] = L'\0';
 
         for (ULONG i = 0; i < p.count; ++i) {
                 auto &e = p.entries[i];
 
-                char c[3], s[3], pr[3];
+                WCHAR c[3], s[3], pr[3];
                 format_match_field((e.match_flags & vhci::FILTER_MATCH_CLASS) != 0, e.bClass, c);
                 format_match_field((e.match_flags & vhci::FILTER_MATCH_SUBCLASS) != 0, e.bSubClass, s);
                 format_match_field((e.match_flags & vhci::FILTER_MATCH_PROTOCOL) != 0, e.bProtocol, pr);
 
-                char item[20];
-                RtlStringCchPrintfA(item, RTL_NUMBER_OF(item), i ? ", %s/%s/%s" : "%s/%s/%s", c, s, pr);
+                WCHAR item[20];
+                RtlStringCchPrintfW(item, RTL_NUMBER_OF(item), i ? L", %s/%s/%s" : L"%s/%s/%s", c, s, pr);
 
                 size_t used{};
-                RtlStringCchLengthA(buf, cch, &used);
+                RtlStringCchLengthW(buf, cch, &used);
 
-                constexpr size_t reserve_for_ellipsis = RTL_NUMBER_OF(", ...");
+                constexpr size_t reserve_for_ellipsis = RTL_NUMBER_OF(L", ...");
                 size_t itemlen{};
-                RtlStringCchLengthA(item, RTL_NUMBER_OF(item), &itemlen);
+                RtlStringCchLengthW(item, RTL_NUMBER_OF(item), &itemlen);
 
                 if (used + itemlen + reserve_for_ellipsis >= cch) {
-                        RtlStringCchCatA(buf, cch, ", ...");
+                        RtlStringCchCatW(buf, cch, L", ...");
                         return;
                 }
 
-                RtlStringCchCatA(buf, cch, item);
+                RtlStringCchCatW(buf, cch, item);
         }
 }
 
@@ -171,25 +171,15 @@ void report_rejection(
         _In_ device_ctx_ext &ext, _In_ const usbip_usb_device &udev, _In_ const policy &p,
         _In_ const char *reason, _In_ int ifnum, _In_ UINT8 cls, _In_ UINT8 sub, _In_ UINT8 proto)
 {
-        char wl[128];
+        WCHAR wl[128];
         format_whitelist(p, wl, RTL_NUMBER_OF(wl));
 
-        // Interface fragment only when an interface is the cause; device-level reasons omit it.
-        char ifrag[24] = "";
-        if (ifnum >= 0) {
-                RtlStringCchPrintfA(ifrag, RTL_NUMBER_OF(ifrag), "interface %d, ", ifnum);
-        }
-
-        // Human-readable detail shared by the WPP trace, the event-log entry and the attach-
-        // failure reason returned to user space (ioctl::plugin_hardware::filter_reason).
-        auto &detail = ext.filter_reason;
-        RtlStringCchPrintfA(detail, RTL_NUMBER_OF(detail),
-                "%s (%sclass %02X/%02X/%02X %s); not in whitelist: %s",
-                reason, ifrag, cls, sub, proto, usb_class_name(cls), wl);
-
         Trace(TRACE_LEVEL_ERROR,
-                "device-type filter REJECT %!USTR!:%!USTR!/%!USTR! VID_%04X&PID_%04X: %s",
-                ext.node_name(), ext.service_name(), ext.busid(), udev.idVendor, udev.idProduct, detail);
+                "device-type filter REJECT %!USTR!:%!USTR!/%!USTR! VID_%04X&PID_%04X attempted "
+                "%s type class/sub/proto %02X/%02X/%02X (%s), interface %d: %s; not matched by whitelist [%lu]: %S",
+                ext.node_name(), ext.service_name(), ext.busid(), udev.idVendor, udev.idProduct,
+                ifnum >= 0 ? "interface" : "device", cls, sub, proto, usb_class_name(cls), ifnum,
+                reason, p.count, wl);
 
         auto drvobj = WdfDriverWdmGetDriverObject(WdfGetDriver());
         if (!drvobj) {
@@ -209,10 +199,17 @@ void report_rejection(
         // string within ERROR_LOG_MAXIMUM_SIZE; the constexpr makes msg a real array.
         constexpr size_t max_chars = (ERROR_LOG_MAXIMUM_SIZE - sizeof(IO_ERROR_LOG_PACKET)) / sizeof(WCHAR);
 
+        // Interface fragment only when an interface is the cause; device-level reasons omit it.
+        WCHAR ifrag[24] = L"";
+        if (ifnum >= 0) {
+                RtlStringCchPrintfW(ifrag, RTL_NUMBER_OF(ifrag), L"interface %d, ", ifnum);
+        }
+
         WCHAR msg[max_chars];
         auto st = RtlStringCchPrintfW(msg, RTL_NUMBER_OF(msg),
-                L"Blocked VID_%04X&PID_%04X on %wZ (%wZ): %hs",
-                udev.idVendor, udev.idProduct, ext.node_name(), ext.busid(), detail);
+                L"Blocked VID_%04X&PID_%04X on %wZ (%wZ): %hs (%sclass %02X/%02X/%02X %hs); whitelist: %s",
+                udev.idVendor, udev.idProduct, ext.node_name(), ext.busid(),
+                reason, ifrag, cls, sub, proto, usb_class_name(cls), wl);
 
         if (st == STATUS_BUFFER_OVERFLOW) {
                 msg[RTL_NUMBER_OF(msg) - 1] = L'\0'; // truncated copy is fine for logging

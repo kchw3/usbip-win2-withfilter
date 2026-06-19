@@ -422,13 +422,9 @@ bool usbip::vhci::set_device_filter(_In_ HANDLE dev, _In_ const device_filter_po
         return DeviceIoControl(dev, ioctl::SET_DEVICE_FILTER, r, inlen, nullptr, 0, &BytesReturned, nullptr);
 }
 
-int usbip::vhci::attach(_In_ HANDLE dev, _In_ const attach_args &args, _Out_opt_ std::string *reason)
+int usbip::vhci::attach(_In_ HANDLE dev, _In_ const attach_args &args)
 {
         ioctl::plugin_hardware r {{ .size = sizeof(r) }};
-
-        if (reason) {
-                reason->clear();
-        }
 
         if (auto err = assign(r, args)) {
                 SetLastError(err);
@@ -436,25 +432,17 @@ int usbip::vhci::attach(_In_ HANDLE dev, _In_ const attach_args &args, _Out_opt_
         }
 
         auto ctl = args.once ? ioctl::PLUGIN_HARDWARE_ONCE : ioctl::PLUGIN_HARDWARE;
-        constexpr auto port_end = offsetof(ioctl::plugin_hardware, port) + sizeof(r.port);
+        constexpr auto outlen = offsetof(ioctl::plugin_hardware, port) + sizeof(r.port);
 
-        // The success path returns only .port; the device-type filter's denial path returns
-        // .filter_reason too, so always offer the whole buffer for the driver to fill.
-        DWORD BytesReturned{}; // must be set if the last arg is NULL
-        if (DeviceIoControl(dev, ctl, &r, sizeof(r), &r, sizeof(r), &BytesReturned, nullptr)) {
+        if (DWORD BytesReturned{}; // must be set if the last arg is NULL
+            DeviceIoControl(dev, ctl, &r, sizeof(r), &r, outlen, &BytesReturned, nullptr)) {
 
-                if (BytesReturned < port_end) [[unlikely]] {
+                if (BytesReturned != outlen) [[unlikely]] {
                         SetLastError(USBIP_ERROR_DRIVER_RESPONSE);
                 } else {
                         assert(r.port > 0);
                         return r.port;
                 }
-        } else if (auto err = GetLastError();
-                   reason && BytesReturned > offsetof(ioctl::plugin_hardware, filter_reason)) {
-
-                r.filter_reason[sizeof(r.filter_reason) - 1] = '\0'; // ensure NUL-terminated
-                reason->assign(r.filter_reason);
-                SetLastError(err); // assign() must not mask the failure code
         }
 
         auto err = GetLastError();

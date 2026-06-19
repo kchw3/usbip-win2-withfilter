@@ -166,12 +166,6 @@ enum { MAX_DEVICE_FILTER_ENTRIES = 64 };;
 struct plugin_hardware : base, imported_device_location
 {
         char serial[SERIAL_BUFSZ];
-
-        // OUT, UTF-8. Empty unless the attach was denied by the device-type filter, in which
-        // case it holds a human-readable reason (offending class, the reason, and the
-        // whitelist) so the GUI can show it; the kernel sets the returned byte count to
-        // include it only on that path. @see usbip::device_filter
-        char filter_reason[256];
 };
 
 struct stop_attach_attempts : base, imported_device_location

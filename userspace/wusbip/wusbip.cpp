@@ -918,8 +918,7 @@ void MainFrame::on_close_to_tray(wxCommandEvent &event)
 }
 
 DWORD MainFrame::attach(
-        _In_ const wxString &url, _In_ const wxString &busid, _In_ const wxString &serial, _In_ bool once,
-        _Out_opt_ std::string *filter_reason)
+        _In_ const wxString &url, _In_ const wxString &busid, _In_ const wxString &serial, _In_ bool once)
 {
         wxString hostname;
         wxString service;
@@ -939,9 +938,9 @@ DWORD MainFrame::attach(
         };
 
         DWORD err{};
-        auto f = [&err, filter_reason, args = std::move(args), vhci = get_vhci().get()]
-        {
-                auto port = vhci::attach(vhci, args, filter_reason);
+        auto f = [&err, args = std::move(args), vhci = get_vhci().get()]
+        { 
+                auto port = vhci::attach(vhci, args); 
                 err = port > 0 ? ERROR_SUCCESS : GetLastError();
         };
 
@@ -967,16 +966,10 @@ void MainFrame::attach(_In_ bool once)
                 auto &busid = tree.GetItemText(dev);
                 auto &serial = tree.GetItemText(dev, COL_SERIAL);
 
-                std::string filter_reason;
-                if (auto err = attach(url, busid, serial, once, &filter_reason)) {
+                if (auto err = attach(url, busid, serial, once)) {
                         if (err != ERROR_OPERATION_ABORTED) {
-                                auto text = GetLastErrorMsg(err);
-                                if (!filter_reason.empty()) {
-                                        text += L"\n";
-                                        text += wxString::FromUTF8(filter_reason);
-                                }
-                                wxLogError(_("Could not attach %s/%s\nError %lu\n%s"),
-                                              url, busid, err, text);
+                                wxLogError(_("Could not attach %s/%s\nError %lu\n%s"), 
+                                              url, busid, err, GetLastErrorMsg(err));
                         }
                         break;
                 }

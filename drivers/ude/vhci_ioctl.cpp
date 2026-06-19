@@ -272,31 +272,6 @@ PAGED auto set_options(_In_ wsk::SOCKET *sock)
         return STATUS_SUCCESS;
 }
 
-/*
- * Copy the device-type filter's rejection reason into the output buffer and grow the
- * returned byte count to cover it, so user space (vhci::attach) can show why the attach
- * was denied. Runs after the Information restore in complete(), so the count survives to
- * WdfRequestComplete. The success path returns only .port; this is the denied path.
- */
-_IRQL_requires_same_
-_IRQL_requires_(PASSIVE_LEVEL)
-PAGED void return_filter_reason(
-        _In_ WDFREQUEST request, _Inout_ vhci::ioctl::plugin_hardware &r, _In_ const char *reason)
-{
-        PAGED_CODE();
-
-        if (NT_ERROR(RtlStringCchCopyA(r.filter_reason, RTL_NUMBER_OF(r.filter_reason), reason))) {
-                return;
-        }
-
-        size_t len{};
-        if (NT_ERROR(RtlStringCchLengthA(r.filter_reason, RTL_NUMBER_OF(r.filter_reason), &len))) {
-                return;
-        }
-
-        WdfRequestSetInformation(request, __builtin_offsetof(vhci::ioctl::plugin_hardware, filter_reason) + len + 1);
-}
-
 _IRQL_requires_same_
 _IRQL_requires_(PASSIVE_LEVEL)
 PAGED auto connected(_In_ WDFREQUEST request, _Inout_ workitem_ctx &ctx, _Inout_ device_ctx_ext &ext)
@@ -310,9 +285,6 @@ PAGED auto connected(_In_ WDFREQUEST request, _Inout_ workitem_ctx &ctx, _Inout_
         device_state_changed(ctx.vhci, ext.attr, 0, vhci::state::connected);
 
         if (auto err = import_remote_device(ext)) {
-                if (err == USBIP_ERROR_DEVICE_FILTERED && *ext.filter_reason) {
-                        return_filter_reason(request, *r, ext.filter_reason);
-                }
                 return err;
         }
 

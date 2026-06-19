@@ -179,9 +179,11 @@ struct attach_args
 /**
  * @param dev handle of the driver device
  * @param args arguments
- * @return hub port number, >= 1. Call GetLastError() if zero is returned. 
+ * @param reason optional, receives a human-readable reason (UTF-8) when the attach is
+ *        denied by the device-type filter; empty for any other outcome
+ * @return hub port number, >= 1. Call GetLastError() if zero is returned.
  */
-USBIP_API int attach(_In_ HANDLE dev, _In_ const attach_args &args);
+USBIP_API int attach(_In_ HANDLE dev, _In_ const attach_args &args, _Out_opt_ std::string *reason = nullptr);
 
 /**
  * @param dev handle of the driver device

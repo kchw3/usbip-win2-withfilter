@@ -148,7 +148,8 @@ private:
 	void remove_device(_In_ wxTreeListItem dev);
 
         void attach(_In_ bool once);
-        DWORD attach(_In_ const wxString &url, _In_ const wxString &busid, _In_ const wxString &serial, _In_ bool once);
+        DWORD attach(_In_ const wxString &url, _In_ const wxString &busid, _In_ const wxString &serial, _In_ bool once,
+                     _Out_opt_ std::string *filter_reason = nullptr);
         DWORD detach(_In_ int port);
 	
 	void post_refresh();

@@ -104,6 +104,10 @@ struct device_ctx_ext
 
         device_attributes attr;
 
+        // Set by the device-type filter when it denies the attach; returned to user space
+        // via ioctl::plugin_hardware::filter_reason. @see usbip::device_filter::report_rejection
+        char filter_reason[sizeof(vhci::ioctl::plugin_hardware::filter_reason)];
+
         auto node_name() { return &attr.node_name; }
         auto service_name() { return &attr.service_name; }
         auto busid() { return &attr.busid; }

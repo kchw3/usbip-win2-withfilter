@@ -304,18 +304,13 @@ PAGED auto connected(_In_ WDFREQUEST request, _Inout_ workitem_ctx &ctx, _Inout_
         PAGED_CODE();
         Trace(TRACE_LEVEL_INFORMATION, "%!USTR!:%!USTR!", ext.node_name(), ext.service_name());
 
-        constexpr auto in_size = __builtin_offsetof(vhci::ioctl::plugin_hardware, filter_reason);
-
         vhci::ioctl::plugin_hardware *r{};
-        size_t length{};
-        NT_VERIFY(NT_SUCCESS(WdfRequestRetrieveInputBuffer(request, in_size, reinterpret_cast<PVOID*>(&r), &length)));
+        NT_VERIFY(NT_SUCCESS(WdfRequestRetrieveInputBuffer(request, sizeof(*r), reinterpret_cast<PVOID*>(&r), nullptr)));
 
         device_state_changed(ctx.vhci, ext.attr, 0, vhci::state::connected);
 
         if (auto err = import_remote_device(ext)) {
-                // Only write the detailed reason when the buffer can hold filter_reason; a smaller
-                // (older) buffer still gets the rejection status, just without the explanatory text.
-                if (err == USBIP_ERROR_DEVICE_FILTERED && *ext.filter_reason && length >= sizeof(*r)) {
+                if (err == USBIP_ERROR_DEVICE_FILTERED && *ext.filter_reason) {
                         return_filter_reason(request, *r, ext.filter_reason);
                 }
                 return err;
@@ -656,16 +651,10 @@ PAGED NTSTATUS plugin_hardware(_In_ WDFREQUEST request, _In_ bool once)
 
         vhci::ioctl::plugin_hardware *r{};
 
-        // filter_reason is an OUT-only field appended at the end of the struct; the success path
-        // and older clients neither send nor expect it. Require only the input fields so a client
-        // built against the smaller struct still attaches; the reason is copied back later only
-        // when the buffer is actually large enough to hold it (see connected()).
-        constexpr auto in_size = __builtin_offsetof(vhci::ioctl::plugin_hardware, filter_reason);
-
         if (size_t length;
-            auto err = WdfRequestRetrieveInputBuffer(request, in_size, reinterpret_cast<PVOID*>(&r), &length)) {
+            auto err = WdfRequestRetrieveInputBuffer(request, sizeof(*r), reinterpret_cast<PVOID*>(&r), &length)) {
                 return err;
-        } else if (length < in_size) {
+        } else if (length != sizeof(*r)) {
                 return STATUS_INVALID_BUFFER_SIZE;
         } else if (r->size != length) {
                 Trace(TRACE_LEVEL_ERROR, "struct.size %lu != sizeof(struct) %Iu", r->size, length);

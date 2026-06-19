@@ -33,7 +33,6 @@
     <ClInclude Include="wdf_cpp.h" />
     <ClInclude Include="ch9.h" />
     <ClInclude Include="unique_ptr.h" />
-    <ClInclude Include="remove_lock.h" />
     <ClInclude Include="ioctl.h" />
     <ClInclude Include="irp.h" />
     <ClInclude Include="select.h" />

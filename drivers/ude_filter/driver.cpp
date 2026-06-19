@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022-2025 Vadym Hrynchyshyn <vadimgrn@gmail.com>
+ * Copyright (c) 2022-2026 Vadym Hrynchyshyn <vadimgrn@gmail.com>
  * 
  * @see https://github.com/desowin/usbpcap/tree/master/USBPcapDriver
  */
@@ -11,8 +11,6 @@
 #include "irp.h"
 #include "pnp.h"
 #include "int_dev_ctrl.h"
-
-#include <libdrv\remove_lock.h>
 
 namespace
 {
@@ -35,13 +33,6 @@ _IRQL_requires_same_
 auto dispatch_lower(_In_ DEVICE_OBJECT *devobj, _Inout_ IRP *irp)
 {
 	auto &f = *get_filter_ext(devobj);
-
-	libdrv::RemoveLockGuard lck(f.remove_lock);
-	if (auto err = lck.acquired()) {
-		Trace(TRACE_LEVEL_ERROR, "Acquire remove lock %!STATUS!", err);
-		return CompleteRequest(irp, err);
-	}
-
 	return ForwardIrp(f, irp);
 }
 

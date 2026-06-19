@@ -28,7 +28,7 @@ _Function_class_(IO_COMPLETION_ROUTINE)
 _IRQL_requires_same_
 _IRQL_requires_max_(DISPATCH_LEVEL)
 NTSTATUS request_complete(
-	_In_ DEVICE_OBJECT *devobj, _In_ IRP *irp, _In_reads_opt_(_Inexpressible_("varies")) void *context)
+	[[maybe_unused]] _In_ DEVICE_OBJECT *devobj, _In_ IRP *irp, _In_reads_opt_(_Inexpressible_("varies")) void *context)
 {
         NT_ASSERT(!devobj);
         auto &fltr = *static_cast<filter_ext*>(context);

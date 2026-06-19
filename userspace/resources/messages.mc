@@ -157,4 +157,5 @@ Facility=Driver
 SymbolicName=USBIP_ERROR_DEVICE_FILTERED
 Language=English
 Device blocked by the device-type filter (a USB class is not in the whitelist).
+%1
 .

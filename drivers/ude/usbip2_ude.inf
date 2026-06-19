@@ -85,9 +85,11 @@ HKR, Parameters, ReattachMaxDelay, %REG_DWORD%, 480 ; seconds
 ; (empty whitelist => every device is denied until an administrator configures it).
 
 ; Register the driver as a System event-log source so device-type filter rejections are
-; recorded in the Windows event log. NOTE: formatted descriptions require a message
-; catalog embedded in the driver binary (follow-up); until then Event Viewer shows the
-; rejection details from the inserted string.
+; recorded in the Windows event log. Formatted descriptions come from the message table
+; compiled from messages.mc into resources.dll; the installer (setup.iss [Registry]) sets
+; the EventMessageFile value to the deployed resources.dll path, which only it knows. When
+; installed without the setup wizard, register EventMessageFile manually to resolve the
+; "description for Event ID ... cannot be found" message in Event Viewer.
 [ude_EventLog_AddReg]
 HKLM, "SYSTEM\CurrentControlSet\Services\EventLog\System\usbip2_ude", TypesSupported, %REG_DWORD%, 7
 

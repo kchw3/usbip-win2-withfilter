@@ -146,6 +146,16 @@ Source: {#SolutionDir + "userspace\innosetup\task_detach_all.xml"}; DestDir: "{t
 Name: vcredist; Description: "Install Microsoft Visual C++ &Redistributable(x64)"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Components: gui
 
+[Registry]
+
+; resources.dll embeds the compiled message table (messages.mc) and is deployed to {app}
+; by the [Files] "*.dll" rule. Point the usbip2_ude event-log source at it so Event Viewer
+; can format device-type filter rejection events instead of reporting that the description
+; for the event id "cannot be found". The usbip2_ude.inf creates this source key and sets
+; TypesSupported; EventMessageFile must live here because only the installer knows {app}.
+Root: HKLM; Subkey: "SYSTEM\CurrentControlSet\Services\EventLog\System\{#UdeDriver}"; ValueType: expandsz; ValueName: "EventMessageFile"; ValueData: "{app}\resources.dll"; Flags: uninsdeletevalue; Components: client
+Root: HKLM; Subkey: "SYSTEM\CurrentControlSet\Services\EventLog\System\{#UdeDriver}"; ValueType: dword; ValueName: "TypesSupported"; ValueData: "$00000007"; Flags: uninsdeletevalue; Components: client
+
 [Run]
 
 Filename: {tmp}\{#VCToolsRedistExe}; Parameters: "/quiet /norestart"; Tasks: vcredist

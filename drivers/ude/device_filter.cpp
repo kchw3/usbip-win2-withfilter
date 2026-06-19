@@ -189,12 +189,15 @@ void report_rejection(
 
         // IO_ERROR_LOG_PACKET ends with "ULONG DumpData[1]"; with no dump data the strings
         // start at FIELD_OFFSET(..., DumpData), not sizeof(IO_ERROR_LOG_PACKET) (which counts
-        // that placeholder element). Getting this wrong leaves %1 unresolved in the event log.
-        constexpr USHORT header_size = FIELD_OFFSET(IO_ERROR_LOG_PACKET, DumpData);
+        // that placeholder element plus any trailing padding). Getting this wrong leaves %1
+        // unresolved in the event log. FIELD_OFFSET isn't a constant expression under MSVC,
+        // so header_size is a plain runtime const used for StringOffset and the alloc size.
+        const USHORT header_size = FIELD_OFFSET(IO_ERROR_LOG_PACKET, DumpData);
 
-        // Keep the inserted string within ERROR_LOG_MAXIMUM_SIZE.
-        constexpr USHORT max_str_bytes = ERROR_LOG_MAXIMUM_SIZE - header_size;
-        constexpr size_t max_chars = max_str_bytes / sizeof(WCHAR);
+        // Stack buffer for the inserted string. sizeof(IO_ERROR_LOG_PACKET) is a safe
+        // (slightly conservative) compile-time upper bound on the header, keeping the
+        // string within ERROR_LOG_MAXIMUM_SIZE; the constexpr makes msg a real array.
+        constexpr size_t max_chars = (ERROR_LOG_MAXIMUM_SIZE - sizeof(IO_ERROR_LOG_PACKET)) / sizeof(WCHAR);
 
         // Interface fragment only when an interface is the cause; device-level reasons omit it.
         WCHAR ifrag[24] = L"";

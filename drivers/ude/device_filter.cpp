@@ -95,24 +95,90 @@ const char *usb_class_name(_In_ UINT8 cls)
 }
 
 /*
+ * Render one match field of a whitelist entry as "%02X" if the entry actually constrains
+ * it (FILTER_MATCH_* flag set), or "**" if the field is a wildcard for that entry.
+ */
+_IRQL_requires_same_
+_IRQL_requires_max_(DISPATCH_LEVEL)
+void format_match_field(_In_ bool matched, _In_ UINT8 v, _Out_writes_z_(3) WCHAR *out)
+{
+        if (matched) {
+                RtlStringCchPrintfW(out, 3, L"%02X", v);
+        } else {
+                out[0] = L'*';
+                out[1] = L'*';
+                out[2] = L'\0';
+        }
+}
+
+/*
+ * Render the currently configured whitelist as a comma-separated list of class/sub/proto
+ * triples (e.g. "08/06/50, 03/**/**"), so a rejection log shows exactly what *is* allowed
+ * instead of leaving the admin to guess why the attempted type didn't match anything.
+ * Truncates with a trailing "..." if the policy has more entries than fit in buf.
+ */
+_IRQL_requires_same_
+_IRQL_requires_max_(DISPATCH_LEVEL)
+void format_whitelist(_In_ const policy &p, _Out_writes_z_(cch) WCHAR *buf, _In_ size_t cch)
+{
+        if (!p.count) {
+                RtlStringCchCopyW(buf, cch, L"(empty)");
+                return;
+        }
+
+        buf[0] = L'\0';
+
+        for (ULONG i = 0; i < p.count; ++i) {
+                auto &e = p.entries[i];
+
+                WCHAR c[3], s[3], pr[3];
+                format_match_field((e.match_flags & vhci::FILTER_MATCH_CLASS) != 0, e.bClass, c);
+                format_match_field((e.match_flags & vhci::FILTER_MATCH_SUBCLASS) != 0, e.bSubClass, s);
+                format_match_field((e.match_flags & vhci::FILTER_MATCH_PROTOCOL) != 0, e.bProtocol, pr);
+
+                WCHAR item[20];
+                RtlStringCchPrintfW(item, RTL_NUMBER_OF(item), i ? L", %s/%s/%s" : L"%s/%s/%s", c, s, pr);
+
+                size_t used{};
+                RtlStringCchLengthW(buf, cch, &used);
+
+                constexpr size_t reserve_for_ellipsis = RTL_NUMBER_OF(L", ...");
+                size_t itemlen{};
+                RtlStringCchLengthW(item, RTL_NUMBER_OF(item), &itemlen);
+
+                if (used + itemlen + reserve_for_ellipsis >= cch) {
+                        RtlStringCchCatW(buf, cch, L", ...");
+                        return;
+                }
+
+                RtlStringCchCatW(buf, cch, item);
+        }
+}
+
+/*
  * Write an admin-visible Windows System Event Log entry plus a verbose WPP trace.
  * Both records carry the remote endpoint, the device VID/PID, the offending class triple
- * (with its human-readable class name) and the reason, so a rejection can be diagnosed
- * from either the event log or a WPP trace without cross-referencing.
+ * (with its human-readable class name), the reason, and the full whitelist that the
+ * attempted type failed to match, so a rejection can be diagnosed from either the event
+ * log or a WPP trace without cross-referencing or reading back the policy separately.
  *
  * @param ifnum interface number, or -1 for device-level / global reasons
  */
 _IRQL_requires_same_
 _IRQL_requires_max_(DISPATCH_LEVEL)
 void report_rejection(
-        _In_ device_ctx_ext &ext, _In_ const usbip_usb_device &udev, _In_ const char *reason,
-        _In_ int ifnum, _In_ UINT8 cls, _In_ UINT8 sub, _In_ UINT8 proto)
+        _In_ device_ctx_ext &ext, _In_ const usbip_usb_device &udev, _In_ const policy &p,
+        _In_ const char *reason, _In_ int ifnum, _In_ UINT8 cls, _In_ UINT8 sub, _In_ UINT8 proto)
 {
+        WCHAR wl[128];
+        format_whitelist(p, wl, RTL_NUMBER_OF(wl));
+
         Trace(TRACE_LEVEL_ERROR,
-                "device-type filter REJECT %!USTR!:%!USTR!/%!USTR! VID_%04X&PID_%04X, "
-                "%s, class/sub/proto %02X/%02X/%02X (%s), interface %d",
+                "device-type filter REJECT %!USTR!:%!USTR!/%!USTR! VID_%04X&PID_%04X attempted "
+                "%s type class/sub/proto %02X/%02X/%02X (%s), interface %d: %s; not matched by whitelist [%lu]: %S",
                 ext.node_name(), ext.service_name(), ext.busid(), udev.idVendor, udev.idProduct,
-                reason, cls, sub, proto, usb_class_name(cls), ifnum);
+                ifnum >= 0 ? "interface" : "device", cls, sub, proto, usb_class_name(cls), ifnum,
+                reason, p.count, wl);
 
         auto drvobj = WdfDriverWdmGetDriverObject(WdfGetDriver());
         if (!drvobj) {
@@ -132,9 +198,9 @@ void report_rejection(
 
         WCHAR msg[max_chars];
         auto st = RtlStringCchPrintfW(msg, RTL_NUMBER_OF(msg),
-                L"Blocked VID_%04X&PID_%04X on %wZ (%wZ): %hs (%sclass %02X/%02X/%02X %hs)",
+                L"Blocked VID_%04X&PID_%04X on %wZ (%wZ): %hs (%sclass %02X/%02X/%02X %hs); whitelist: %s",
                 udev.idVendor, udev.idProduct, ext.node_name(), ext.busid(),
-                reason, ifrag, cls, sub, proto, usb_class_name(cls));
+                reason, ifrag, cls, sub, proto, usb_class_name(cls), wl);
 
         if (st == STATUS_BUFFER_OVERFLOW) {
                 msg[RTL_NUMBER_OF(msg) - 1] = L'\0'; // truncated copy is fine for logging
@@ -277,36 +343,36 @@ PAGED NTSTATUS check_configuration(
 
         if (auto err = get_descriptor(ext, seqnum, USB_CONFIGURATION_DESCRIPTOR_TYPE, cfg_index,
                                       memory::stack, &head, sizeof(head), got)) {
-                report_rejection(ext, udev, "config descriptor header fetch failed", -1, 0, 0, 0);
+                report_rejection(ext, udev, p, "config descriptor header fetch failed", -1, 0, 0, 0);
                 return USBIP_ERROR_DEVICE_FILTERED;
         }
 
         if (got < sizeof(head) || !libdrv::is_valid(head)) {
-                report_rejection(ext, udev, "invalid config descriptor", -1, 0, 0, 0);
+                report_rejection(ext, udev, p, "invalid config descriptor", -1, 0, 0, 0);
                 return USBIP_ERROR_DEVICE_FILTERED;
         }
 
         ULONG total = head.wTotalLength;
         if (total < sizeof(head) || total > MAX_CONFIG_DESCRIPTOR_SIZE) {
-                report_rejection(ext, udev, "bad config wTotalLength", -1, 0, 0, 0);
+                report_rejection(ext, udev, p, "bad config wTotalLength", -1, 0, 0, 0);
                 return USBIP_ERROR_DEVICE_FILTERED;
         }
 
         unique_ptr buf(NonPagedPoolNx, total);
         if (!buf) {
-                report_rejection(ext, udev, "out of memory for config descriptor", -1, 0, 0, 0);
+                report_rejection(ext, udev, p, "out of memory for config descriptor", -1, 0, 0, 0);
                 return USBIP_ERROR_DEVICE_FILTERED;
         }
 
         UINT16 full{};
         if (auto err = get_descriptor(ext, seqnum, USB_CONFIGURATION_DESCRIPTOR_TYPE, cfg_index,
                                       memory::nonpaged, buf.get(), static_cast<UINT16>(total), full)) {
-                report_rejection(ext, udev, "full config descriptor fetch failed", -1, 0, 0, 0);
+                report_rejection(ext, udev, p, "full config descriptor fetch failed", -1, 0, 0, 0);
                 return USBIP_ERROR_DEVICE_FILTERED;
         }
 
         if (full < total) {
-                report_rejection(ext, udev, "short config descriptor", -1, 0, 0, 0);
+                report_rejection(ext, udev, p, "short config descriptor", -1, 0, 0, 0);
                 return USBIP_ERROR_DEVICE_FILTERED;
         }
 
@@ -319,7 +385,7 @@ PAGED NTSTATUS check_configuration(
                 auto d = reinterpret_cast<USB_COMMON_DESCRIPTOR*>(cur);
 
                 if (d->bLength < sizeof(USB_COMMON_DESCRIPTOR) || cur + d->bLength > end) {
-                        report_rejection(ext, udev, "malformed descriptor in configuration", -1, 0, 0, 0);
+                        report_rejection(ext, udev, p, "malformed descriptor in configuration", -1, 0, 0, 0);
                         return USBIP_ERROR_DEVICE_FILTERED;
                 }
 
@@ -330,7 +396,7 @@ PAGED NTSTATUS check_configuration(
                         ++interfaces;
 
                         if (!is_allowed(p, id.bInterfaceClass, id.bInterfaceSubClass, id.bInterfaceProtocol)) {
-                                report_rejection(ext, udev, "interface class not in whitelist",
+                                report_rejection(ext, udev, p, "interface class not in whitelist",
                                         id.bInterfaceNumber, id.bInterfaceClass, id.bInterfaceSubClass,
                                         id.bInterfaceProtocol);
                                 return USBIP_ERROR_DEVICE_FILTERED;
@@ -465,14 +531,14 @@ PAGED NTSTATUS usbip::device_filter::check_device(_Inout_ device_ctx_ext &ext, _
         // Device-descriptor class token (skip 0x00 = defined per interface, 0xEF = composite glue).
         if (udev.bDeviceClass && udev.bDeviceClass != 0xEF) {
                 if (!is_allowed(p, udev.bDeviceClass, udev.bDeviceSubClass, udev.bDeviceProtocol)) {
-                        report_rejection(ext, udev, "device class not in whitelist", -1,
+                        report_rejection(ext, udev, p, "device class not in whitelist", -1,
                                 udev.bDeviceClass, udev.bDeviceSubClass, udev.bDeviceProtocol);
                         return USBIP_ERROR_DEVICE_FILTERED;
                 }
         }
 
         if (!udev.bNumConfigurations) {
-                report_rejection(ext, udev, "device reports no configurations", -1, 0, 0, 0);
+                report_rejection(ext, udev, p, "device reports no configurations", -1, 0, 0, 0);
                 return USBIP_ERROR_DEVICE_FILTERED;
         }
 

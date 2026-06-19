@@ -234,6 +234,8 @@ void report_rejection(
 
         RtlZeroMemory(entry, size);
         entry->ErrorCode = USBIP_ERROR_DEVICE_FILTERED;
+        // %1 in the message catalog is reserved by the I/O manager for drvobj's own name;
+        // driver-supplied strings start at %2, hence messages.mc uses %2 for this one.
         entry->NumberOfStrings = 1;
         entry->DumpDataSize = 0;
         entry->StringOffset = header_size; // == FIELD_OFFSET(IO_ERROR_LOG_PACKET, DumpData) + DumpDataSize

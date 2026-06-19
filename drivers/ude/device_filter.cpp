@@ -113,8 +113,9 @@ void format_match_field(_In_ bool matched, _In_ UINT8 v, _Out_writes_z_(3) WCHAR
 
 /*
  * Render the currently configured whitelist as a comma-separated list of class/sub/proto
- * triples (e.g. "08/06/50, 03/**/**"), so a rejection log shows exactly what *is* allowed
- * instead of leaving the admin to guess why the attempted type didn't match anything.
+ * triples (for example "08/06/50, 03/xx/xx" where xx is a wildcard field), so a rejection
+ * log shows exactly what is allowed instead of leaving the admin to guess why the attempted
+ * type didn't match anything. Wildcard fields are emitted as "**" in the actual output.
  * Truncates with a trailing "..." if the policy has more entries than fit in buf.
  */
 _IRQL_requires_same_

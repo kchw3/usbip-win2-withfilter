@@ -1,0 +1,6 @@
+# These run on the Linux USB/IP server and MUST stay LF, regardless of the
+# repo's CRLF default, or they fail with a bad-interpreter error.
+*.sh   text eol=lf
+*.py   text eol=lf
+# Windows helper; LF is fine for PowerShell too.
+*.ps1  text eol=lf

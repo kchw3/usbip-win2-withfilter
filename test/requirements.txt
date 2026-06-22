@@ -1,0 +1,5 @@
+# Controller-side deps for the integration harness. The unit tests
+# (test_descriptors.py) need only pytest.
+pytest>=7
+paramiko>=3      # SSH to the Linux USB/IP server
+pywinrm>=0.4     # WinRM to the Windows client

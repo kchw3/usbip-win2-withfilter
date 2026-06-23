@@ -82,10 +82,15 @@ def test_linux_udc_available(config, ssh):
 
 def test_linux_usbipd_listening(config, ssh):
     port = config.getint("server", "port", fallback=DEFAULT_USBIP_PORT)
+    # Check for a LISTEN socket on the port via ss (with a netstat fallback);
+    # both report listening sockets portably, unlike bash's /dev/tcp which only
+    # works when the SSH login shell happens to be bash.
     rc, out, _err = _ssh_run(
-        ssh, f"(exec 3<>/dev/tcp/127.0.0.1/{port}) 2>/dev/null && echo found")
+        ssh,
+        f"(ss -ltnH 2>/dev/null || netstat -ltn 2>/dev/null) | grep -q ':{port} ' "
+        f"&& echo found")
     assert rc == 0 and "found" in out, (
-        f"nothing is listening on 127.0.0.1:{port} on the [linux] host -- "
+        f"no process is listening on TCP {port} on the [linux] host -- "
         f"is usbipd running?")
 
 

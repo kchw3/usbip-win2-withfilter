@@ -14,9 +14,10 @@
 #   # OR for a "physically present" gadget that 'usbip list -l' shows:
 #   modprobe dummy_hcd
 #
-# NOTE (open item): the exact usbip bind/list command for usbip-vudc must be
-# verified on the target kernel. With dummy_hcd the gadget appears as a normal
-# local device and the standard 'usbip list -l' / 'usbip bind -b <busid>' work.
+# NOTE: with usbip-vudc the gadget is exported by usbipd in *device* mode
+# (usbipd --device); there is no 'usbip bind' step. With dummy_hcd the gadget
+# appears as a normal local device and the usbip-host path ('usbip bind -b
+# <busid>') applies instead. usbip_export() below handles both automatically.
 #
 # Usage: source this file, then call g_* functions. See gadgets/*.sh.
 
@@ -145,16 +146,73 @@ g_bind() {
   echo "${UDC_NAME}" > "${G}/UDC"
 }
 
-# usbip_export : bind the busid for export. See NOTE at top re: vudc vs dummy_hcd.
+# _usbipd_ensure <host|device> : ensure usbipd is running in the requested mode.
+# usbipd runs in exactly one mode at a time (host mode exports usbip-host stub
+# devices; device mode '--device' exports vudc gadgets), so if it is up in the
+# wrong mode we restart it.
+_usbipd_ensure() {
+  local want="$1"   # host | device
+  local running_mode=""
+  if pgrep -x usbipd >/dev/null; then
+    if pgrep -af usbipd | grep -qE -- '(^|[[:space:]])(-e|--device)([[:space:]]|$)'; then
+      running_mode="device"
+    else
+      running_mode="host"
+    fi
+  fi
+  [[ "${running_mode}" == "${want}" ]] && return 0
+  [[ -n "${running_mode}" ]] && { pkill -x usbipd 2>/dev/null || true; sleep 0.5; }
+  if [[ "${want}" == "device" ]]; then
+    usbipd --device -D
+  else
+    usbipd -D
+  fi
+  sleep 0.5
+}
+
+# usbip_export : make the gadget importable by USB/IP clients.
+#
+# vudc and the usbip-host stub use different mechanisms:
+#   - vudc : the gadget is bound to the vudc UDC (g_bind) and offered by a
+#            usbipd running in *device* mode. There is NO 'usbip bind' step, and
+#            a host-mode daemon will not offer it.
+#   - stub : (dummy_hcd / real hardware) a host-mode usbipd plus
+#            'usbip bind -b <busid>' on the device's bus address.
+# The client attaches the same way for both: usbip attach -r <server> -b <busid>.
 usbip_export() {
   local busid="${1:-${UDC_NAME}}"
-  pgrep -x usbipd >/dev/null || usbipd -D
-  usbip bind -b "${busid}"
+  case "${busid}" in
+  *vudc*)
+    _usbipd_ensure device
+    local i
+    for i in 1 2 3 4 5; do
+      if usbip list -r 127.0.0.1 2>/dev/null | grep -q "${busid}"; then
+        return 0
+      fi
+      sleep 1
+    done
+    echo "usbip_export: vudc device '${busid}' not offered by device-mode usbipd" >&2
+    usbip list -r 127.0.0.1 >&2 || true
+    return 1
+    ;;
+  *)
+    _usbipd_ensure host
+    usbip bind -b "${busid}"
+    ;;
+  esac
 }
 
 usbip_unexport() {
   local busid="${1:-${UDC_NAME}}"
-  usbip unbind -b "${busid}" || true
+  case "${busid}" in
+  *vudc*)
+    # vudc has no stub 'unbind'; the gadget is detached by g_teardown (UDC clear).
+    return 0
+    ;;
+  *)
+    usbip unbind -b "${busid}" || true
+    ;;
+  esac
 }
 
 # g_teardown : fully remove the gadget (safe to call when nothing exists).

@@ -51,9 +51,12 @@ Windows client (a VM with snapshots is recommended):
 > even when PowerShell's execution policy is `Restricted`; no
 > `Set-ExecutionPolicy` change is required on the client.
 
-> Open item: verify the exact `usbip` bind/list command for `usbip-vudc` on your
-> kernel. With `dummy_hcd` the gadget appears as a normal local device and the
-> standard `usbip list -l` / `usbip bind -b <busid>` work.
+> With `usbip-vudc`, the gadget is exported by `usbipd` running in **device
+> mode** (`usbipd --device`) and there is no `usbip bind` step — the harness
+> starts/swaps the daemon into the right mode automatically. The client attaches
+> with `usbip attach -r <server> -b usbip-vudc.0`. (With `dummy_hcd` the gadget
+> is a normal local device and the host-mode `usbip bind -b <busid>` path is
+> used instead.)
 
 ## Running
 

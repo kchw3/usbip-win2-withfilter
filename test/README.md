@@ -15,6 +15,7 @@ test/
   conftest.py           # pytest fixtures (SSH to Linux, WinRM to Windows)
   config.example.ini    # copy to config.ini (gitignored) and fill in
   test_descriptors.py   # pure unit tests (run anywhere, no lab)
+  test_connectivity.py  # sanity-checks the config.ini wiring (SSH/WinRM/UDC/port)
   test_matrix.py        # integration: policy x device decision matrix (filter ON)
   test_robustness.py    # integration: attacks #9 (malformed) and #10 (TOCTOU)
   test_attack_efficacy.py # negative control: attacks really work (filter OFF)
@@ -57,7 +58,17 @@ Unit tests only (no lab needed):
 pytest test/test_descriptors.py -v
 ```
 
-Full integration (after creating `test/config.ini`):
+After creating `test/config.ini`, sanity-check the lab wiring itself before
+running anything that builds gadgets or attaches devices:
+```
+pytest test/test_connectivity.py -v
+```
+This checks each leg in isolation (SSH to the Linux server, the UDC and
+`test_dir` it expects, WinRM to the Windows client, `helpers.ps1` /
+`usbip.exe` paths, and that the client can reach the USB/IP server's TCP
+port) and fails with a message naming the specific `config.ini` key to fix.
+
+Full integration:
 ```
 pytest test/ -v
 ```

@@ -47,6 +47,10 @@ Windows client (a VM with snapshots is recommended):
 - enable WinRM for the harness,
 - copy `test/windows/helpers.ps1` (path goes in config.ini [windows] helpers).
 
+> The harness loads `helpers.ps1` by content (as a script block), so it works
+> even when PowerShell's execution policy is `Restricted`; no
+> `Set-ExecutionPolicy` change is required on the client.
+
 > Open item: verify the exact `usbip` bind/list command for `usbip-vudc` on your
 > kernel. With `dummy_hcd` the gadget appears as a normal local device and the
 > standard `usbip list -l` / `usbip bind -b <busid>` work.

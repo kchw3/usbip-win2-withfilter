@@ -149,7 +149,17 @@ class WindowsClient:
         )
 
     def ps(self, script: str) -> "winrm.Response":
-        full = f". {self.helpers!r}\n$UsbipExe = {self.usbip!r}\n{script}"
+        # Dot-source the helpers by *content*, not by path. Loading a .ps1 file
+        # is gated by PowerShell's execution policy (which may be locked to
+        # Restricted/AllSigned by Group Policy on a hardened client and cannot be
+        # overridden per-user); creating a script block from a string is not.
+        # This keeps the harness working without requiring Set-ExecutionPolicy.
+        full = (
+            f"$__helpers = Get-Content -Raw -LiteralPath {self.helpers!r}\n"
+            f". ([scriptblock]::Create($__helpers))\n"
+            f"$UsbipExe = {self.usbip!r}\n"
+            f"{script}"
+        )
         r = self.session.run_ps(full)
         if r.status_code != 0:
             raise RuntimeError(f"[win] ps failed\n{r.std_out.decode()}\n{r.std_err.decode()}")

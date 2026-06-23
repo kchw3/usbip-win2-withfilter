@@ -39,11 +39,17 @@ function Invoke-Attach {
 function Test-PnpPresent {
     # True if a device with the given VID/PID is currently enumerated by Windows.
     # This is the security-critical oracle: on DENY it must be $false.
+    #
+    # The PID parameter is named $ProductId rather than $Pid: PowerShell has a
+    # built-in, read-only automatic variable $PID (current process ID), and a
+    # parameter literally named $Pid collides with it ("Cannot overwrite
+    # variable Pid because it is read-only or constant") as soon as the caller
+    # binds an argument to it.
     param(
-        [Parameter(Mandatory)] [string] $Vid,   # e.g. '16C0'
-        [Parameter(Mandatory)] [string] $Pid    # e.g. '03EA'
+        [Parameter(Mandatory)] [string] $Vid,        # e.g. '16C0'
+        [Parameter(Mandatory)] [string] $ProductId   # e.g. '03EA'
     )
-    $match = "VID_${Vid}&PID_${Pid}"
+    $match = "VID_${Vid}&PID_${ProductId}"
     $null -ne (Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue |
                Where-Object { $_.InstanceId -match $match })
 }

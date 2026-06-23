@@ -180,7 +180,7 @@ class WindowsClient:
         return r.std_out.decode().strip().lower().startswith("true")
 
     def pnp_present(self, vid: str, pid: str) -> bool:
-        r = self.ps(f"Test-PnpPresent -Vid '{vid}' -Pid '{pid}'")
+        r = self.ps(f"Test-PnpPresent -Vid '{vid}' -ProductId '{pid}'")
         return r.std_out.decode().strip().lower().startswith("true")
 
     def rejection_logged(self, contains: str) -> bool:

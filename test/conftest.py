@@ -14,6 +14,7 @@ from __future__ import annotations
 import configparser
 import os
 import shlex
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -82,8 +83,74 @@ class LinuxServer:
             raise RuntimeError(f"[linux] {cmd!r} exit {rc}\n{stdout}\n{stderr}")
         return stdout + stderr
 
+    def ensure_vudc_ready(self) -> None:
+        """Server-side preflight for the usbip-vudc gadget path.
+
+        Builds run on a remote Linux server, so a missing kernel module or a
+        usbipd in the wrong mode surfaces as a cryptic failure deep inside the
+        gadget script (e.g. mkdir EPERM on /sys/kernel/config/usb_gadget, or
+        'device not offered'). This checks the prerequisites up front, fixes
+        what it safely can (mount configfs, modprobe, start usbipd --device),
+        and otherwise raises a message naming the exact command to run.
+
+        Only meaningful for the vudc path; it is a no-op for a dummy_hcd busid.
+        """
+        if "vudc" not in self.udc:
+            return
+        script = textwrap.dedent(f"""
+            set -u
+            udc={shlex.quote(self.udc)}
+
+            # 1. libcomposite publishes /sys/kernel/config/usb_gadget. Without it
+            #    the gadget mkdir fails with 'Operation not permitted'.
+            if [ ! -d /sys/kernel/config/usb_gadget ]; then
+              mountpoint -q /sys/kernel/config 2>/dev/null \\
+                || mount -t configfs none /sys/kernel/config 2>/dev/null || true
+              modprobe libcomposite 2>/dev/null || true
+            fi
+            if [ ! -d /sys/kernel/config/usb_gadget ]; then
+              echo "PREFLIGHT-FAIL libcomposite not loaded: /sys/kernel/config/usb_gadget is absent." >&2
+              echo "  fix on the [linux] server (as root): modprobe libcomposite" >&2
+              exit 11
+            fi
+
+            # 2. the vudc UDC must exist to bind/export the gadget.
+            if [ ! -e "/sys/class/udc/$udc" ]; then
+              modprobe usbip_vudc 2>/dev/null || modprobe usbip-vudc 2>/dev/null || true
+            fi
+            if [ ! -e "/sys/class/udc/$udc" ]; then
+              echo "PREFLIGHT-FAIL UDC $udc not present under /sys/class/udc." >&2
+              echo "  fix on the [linux] server (as root): modprobe usbip-vudc" >&2
+              exit 12
+            fi
+
+            # 3. usbipd must run in DEVICE mode (usbipd --device) to offer vudc
+            #    gadgets; a host-mode daemon will not. Swap/start it if needed.
+            device_mode() {{ pgrep -af usbipd | grep -qE -- '(^|[[:space:]])(-e|--device)([[:space:]]|$)'; }}
+            if pgrep -x usbipd >/dev/null && ! device_mode; then
+              pkill -x usbipd 2>/dev/null || true; sleep 0.5
+            fi
+            if ! device_mode; then
+              usbipd --device -D 2>/dev/null || true; sleep 0.5
+            fi
+            if ! device_mode; then
+              echo "PREFLIGHT-FAIL usbipd is not running in device mode (usbipd --device)" >&2
+              echo "  and could not be started automatically." >&2
+              echo "  fix on the [linux] server: usbipd --device -D" >&2
+              exit 13
+            fi
+
+            echo PREFLIGHT-OK
+        """)
+        out = self.run(f"bash -c {shlex.quote(script)}", check=False)
+        if "PREFLIGHT-OK" not in out:
+            raise RuntimeError(
+                "usbip-vudc preflight failed on the Linux server "
+                f"(udc={self.udc!r}):\n{out.strip()}")
+
     def build_gadget(self, name: str, vid: str | None = None, pid: str | None = None,
                      extra_env: dict[str, str] | None = None) -> None:
+        self.ensure_vudc_ready()
         env = f"UDC_NAME={shlex.quote(self.udc)}"
         if vid:
             env += f" VID={shlex.quote(vid)}"
@@ -112,6 +179,7 @@ class LinuxServer:
 
         profile: file under raw_gadget/ without .py (e.g. 'toctou').
         """
+        self.ensure_vudc_ready()
         envstr = " ".join(f"{k}={shlex.quote(v)}" for k, v in (env or {}).items())
         rg = f"{self.test_dir}/raw_gadget"
         self.run(

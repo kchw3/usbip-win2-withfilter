@@ -94,6 +94,23 @@ def test_linux_usbipd_listening(config, ssh):
         f"is usbipd running?")
 
 
+def test_linux_usbipd_device_mode(config, ssh):
+    # vudc gadgets are only offered by a usbipd running in *device* mode
+    # (usbipd --device); a host-mode daemon will silently not offer them. This
+    # is a no-op assertion for a dummy_hcd / real-hardware busid (host mode).
+    udc = config["linux"].get("udc_name", "usbip-vudc.0")
+    if "vudc" not in udc:
+        pytest.skip(f"udc_name={udc!r} is not a vudc; device-mode check N/A")
+    rc, out, _err = _ssh_run(
+        ssh,
+        "pgrep -af usbipd | grep -qE -- '(^|[[:space:]])(-e|--device)([[:space:]]|$)' "
+        "&& echo found")
+    assert rc == 0 and "found" in out, (
+        f"no usbipd in device mode found for vudc udc_name={udc!r} -- vudc gadgets "
+        f"are only offered by 'usbipd --device'. The harness starts it on demand, "
+        f"but you can start it manually on the [linux] host with: usbipd --device -D")
+
+
 @pytest.fixture()
 def win_session(config):
     import winrm

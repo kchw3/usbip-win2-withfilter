@@ -42,6 +42,13 @@ apt install usbip                      # usbip + usbipd
 # copy test/linux/ to the server (path goes in config.ini [linux] test_dir)
 ```
 
+> **`libcomposite` is mandatory** for every Tier A/B test: it registers the
+> `usb_gadget` configfs subsystem, i.e. it is what creates
+> `/sys/kernel/config/usb_gadget`. The gadget builders `mkdir` *under* that
+> directory; they cannot create the directory itself. To survive reboots,
+> persist the modules: `echo -e 'libcomposite\nusbip-vudc\nraw_gadget\ndummy_hcd'
+> | sudo tee /etc/modules-load.d/usbip-filter-test.conf`.
+
 Windows client (a VM with snapshots is recommended):
 - install the test-signed `usbip2_ude` + `usbip2_filter` drivers and `usbip.exe`,
 - enable WinRM for the harness,
@@ -88,6 +95,36 @@ pytest test/ -v --run-efficacy
 # or just that suite:
 pytest test/test_attack_efficacy.py -v --run-efficacy
 ```
+
+## Troubleshooting
+
+**`mkdir: cannot create directory '/sys/kernel/config/usb_gadget': Operation not
+permitted`** (typically surfaced as a `RuntimeError` from `conftest.py` while a
+gadget script runs)
+
+This is *not* a permissions/sudo problem and not a test bug. The `usb_gadget`
+directory is published by the **`libcomposite`** kernel module, which is not
+loaded on the Linux server. It lives at the configfs root, where only registered
+subsystems may create entries — so any `mkdir` there returns `EPERM` until the
+module is present. Fix on the **server** (as root):
+```
+mountpoint -q /sys/kernel/config || mount -t configfs none /sys/kernel/config
+modprobe libcomposite        # creates /sys/kernel/config/usb_gadget
+modprobe usbip-vudc          # creates the usbip-vudc.0 UDC
+```
+Verify: `test -d /sys/kernel/config/usb_gadget && ls /sys/class/udc/`.
+
+The harness now preflights this automatically: before building any vudc gadget,
+`LinuxServer.ensure_vudc_ready()` (conftest.py) checks for libcomposite, the
+UDC, and a **device-mode** `usbipd`, attempts to set up each (mount configfs,
+`modprobe`, `usbipd --device -D`), and otherwise raises an error naming the
+exact command to run. `test_connectivity.py` also asserts these directly —
+run it first when wiring a new lab.
+
+**vudc gadget builds but the client never sees the device / `usbip list -r`
+is empty** — `usbipd` is probably running in *host* mode. vudc gadgets are only
+offered by `usbipd --device`. The harness swaps the daemon into device mode
+automatically; to do it by hand: `pkill usbipd; usbipd --device -D`.
 
 ## What each layer asserts
 

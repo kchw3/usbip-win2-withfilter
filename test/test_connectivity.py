@@ -14,10 +14,39 @@ Run: pytest test/test_connectivity.py -v
 from __future__ import annotations
 
 import os
+import shlex
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
 DEFAULT_USBIP_PORT = 3240
+
+# The directory whose contents must match what's deployed to the server's
+# [linux] test_dir. This is the checkout the harness runs from.
+_LOCAL_LINUX_DIR = Path(__file__).parent / "linux"
+
+# A self-contained digest of a directory tree: for every file (sorted, skipping
+# __pycache__/*.pyc) it folds in the relative path and a sha256 of the contents.
+# Run identically on both ends -- in-process here and over SSH on the server --
+# so the algorithm can never drift between them.
+_DIGEST_PY = r'''
+import hashlib, os, sys
+root = sys.argv[1]
+h = hashlib.sha256()
+for dp, dns, fns in os.walk(root):
+    dns[:] = [d for d in sorted(dns) if d != "__pycache__"]
+    for fn in sorted(fns):
+        if fn.endswith(".pyc"):
+            continue
+        p = os.path.join(dp, fn)
+        rel = os.path.relpath(p, root)
+        h.update(rel.encode()); h.update(b"\0")
+        with open(p, "rb") as f:
+            h.update(hashlib.sha256(f.read()).digest())
+print(h.hexdigest())
+'''
 
 
 def test_config_sections_present(config):
@@ -109,6 +138,36 @@ def test_linux_usbipd_device_mode(config, ssh):
         f"no usbipd in device mode found for vudc udc_name={udc!r} -- vudc gadgets "
         f"are only offered by 'usbipd --device'. The harness starts it on demand, "
         f"but you can start it manually on the [linux] host with: usbipd --device -D")
+
+
+def test_linux_deploy_in_sync(config, ssh):
+    # Guard against the "fixed in git but stale on the server" trap: the harness
+    # runs gadget scripts and payloads from the server's test_dir, not from this
+    # checkout, so a forgotten re-deploy means you debug code that isn't running.
+    # Compare a digest of this checkout's test/linux/ against the server copy and
+    # fail with a re-sync hint if they differ. (This asserts the server matches
+    # THIS checkout; run `git pull` here first so "this checkout" is current.)
+    test_dir = config["linux"]["test_dir"]
+
+    local = subprocess.run(
+        [sys.executable, "-c", _DIGEST_PY, str(_LOCAL_LINUX_DIR)],
+        capture_output=True, text=True)
+    assert local.returncode == 0, f"local digest failed: {local.stderr}"
+    local_digest = local.stdout.strip()
+
+    rc, out, err = _ssh_run(
+        ssh, f"python3 -c {shlex.quote(_DIGEST_PY)} {shlex.quote(test_dir)}")
+    assert rc == 0, (
+        f"could not digest server test_dir={test_dir!r} (rc={rc}): {out}{err} -- "
+        f"does the path exist and is python3 installed on the server?")
+    remote_digest = out.strip()
+
+    assert remote_digest == local_digest, (
+        f"server test_dir={test_dir!r} is OUT OF SYNC with this checkout's "
+        f"test/linux/ (local {local_digest[:12]}... != server "
+        f"{remote_digest[:12]}...). Re-deploy before running gadget/payload "
+        f"tests, e.g.:\n"
+        f"    rsync -a --delete test/linux/ <user>@<host>:{test_dir}/")
 
 
 @pytest.fixture()

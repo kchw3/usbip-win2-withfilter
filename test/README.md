@@ -82,6 +82,12 @@ This checks each leg in isolation (SSH to the Linux server, the UDC and
 `usbip.exe` paths, and that the client can reach the USB/IP server's TCP
 port) and fails with a message naming the specific `config.ini` key to fix.
 
+> It also asserts the server's `test_dir` is **byte-for-byte in sync** with
+> this checkout's `test/linux/` (`test_linux_deploy_in_sync`). The harness runs
+> gadget scripts and payloads from `test_dir`, not from your checkout, so a
+> forgotten re-deploy means you debug code that isn't running. If this test
+> fails, `git pull` here, re-`rsync` `test/linux/` to the server, and re-run.
+
 Full integration:
 ```
 pytest test/ -v

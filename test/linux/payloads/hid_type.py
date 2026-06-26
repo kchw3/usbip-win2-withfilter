@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import errno
+import glob
 import os
 import time
 
@@ -28,6 +29,9 @@ import time
 # transport endpoint shutdown"); a busy gadget can also momentarily return
 # EAGAIN. Both mean "not ready yet, retry", not a hard failure.
 _NOT_READY_ERRNOS = frozenset({errno.ESHUTDOWN, errno.EAGAIN})
+
+# configfs root where libcomposite publishes gadgets.
+_GADGET_ROOT = "/sys/kernel/config/usb_gadget"
 
 # Modifier bits (byte 0 of the boot-keyboard report).
 MOD_LSHIFT = 0x02
@@ -72,6 +76,84 @@ def _report(modifier: int = 0, key: int = 0) -> bytes:
     return bytes([modifier, 0, key, 0, 0, 0, 0, 0])
 
 
+def _node_major_minor(node: str) -> tuple[int, int]:
+    st = os.stat(node)
+    return os.major(st.st_rdev), os.minor(st.st_rdev)
+
+
+def resolve_hid_device(spec: str = "auto", root: str = _GADGET_ROOT) -> str:
+    """Resolve which /dev/hidgN char node to write keystrokes to.
+
+    A literal path (e.g. /dev/hidg0) is returned unchanged. With "auto" we map
+    the HID gadget function's configfs ``dev`` attribute (a "major:minor" pair)
+    to the matching /dev/hidg* node instead of assuming hidg0.
+
+    Why this matters: f_hid hands out hidg minors in creation order and does NOT
+    reset them just because a gadget was torn down. A leftover /dev/hidg0 from a
+    previous gadget can outlive its binding, so hardcoding hidg0 may target an
+    orphaned node whose endpoint is permanently disabled -- every write then
+    fails with ESHUTDOWN even though the *current* gadget is healthy on hidg1.
+    We prefer functions belonging to a gadget actually bound to a UDC.
+    """
+    if spec and spec != "auto":
+        return spec
+
+    bound: list[str] = []
+    unbound: list[str] = []
+    for gadget in sorted(glob.glob(os.path.join(root, "*"))):
+        try:
+            udc = open(os.path.join(gadget, "UDC")).read().strip()
+        except OSError:
+            udc = ""
+        dev_attrs = sorted(glob.glob(os.path.join(gadget, "functions", "hid.*", "dev")))
+        (bound if udc else unbound).extend(dev_attrs)
+
+    candidates = bound or unbound
+    if not candidates:
+        raise RuntimeError(
+            f"no HID gadget function found under {root}; build and bind a HID "
+            f"gadget (gadgets/hid_keyboard.sh) before injecting keystrokes")
+
+    want = open(candidates[0]).read().strip()  # decimal "major:minor"
+    try:
+        maj, minr = (int(x) for x in want.split(":"))
+    except ValueError as e:
+        raise RuntimeError(f"unexpected hid dev attribute {want!r}") from e
+
+    for node in sorted(glob.glob("/dev/hidg*")):
+        try:
+            if _node_major_minor(node) == (maj, minr):
+                return node
+        except OSError:
+            continue
+    raise RuntimeError(
+        f"HID function dev {want} has no matching /dev/hidg* node "
+        f"(have: {', '.join(sorted(glob.glob('/dev/hidg*'))) or 'none'})")
+
+
+def _udc_state_hint(root: str = _GADGET_ROOT) -> str:
+    """Best-effort summary of each bound gadget's UDC state, for diagnostics.
+
+    A persistent ESHUTDOWN with UDC state != 'configured' means the host never
+    selected the configuration (so the endpoint stays disabled) -- a client-side
+    problem, not a wrong-node one. Surfacing the state distinguishes the two.
+    """
+    notes = []
+    for gadget in sorted(glob.glob(os.path.join(root, "*"))):
+        try:
+            udc = open(os.path.join(gadget, "UDC")).read().strip()
+        except OSError:
+            continue
+        if not udc:
+            continue
+        try:
+            state = open(f"/sys/class/udc/{udc}/state").read().strip()
+        except OSError:
+            state = "unknown"
+        notes.append(f"{os.path.basename(gadget)} -> UDC {udc} state={state}")
+    return "; ".join(notes) if notes else "no gadget bound to a UDC"
+
+
 class Keyboard:
     def __init__(self, device: str, char_delay: float = 0.01,
                  ready_timeout: float = 10.0):
@@ -107,7 +189,10 @@ class Keyboard:
                         f"{self.ready_timeout:g}s. The device attached but the "
                         f"client did not enable the HID interface -- it may still "
                         f"be loading the keyboard driver, or the gadget was "
-                        f"detached. Increase --ready-timeout if the client is slow."
+                        f"detached. Increase --ready-timeout if the client is slow. "
+                        f"Gadget UDC state: {_udc_state_hint()} "
+                        f"(state != 'configured' means the host never selected the "
+                        f"configuration -- a client-side problem, not this payload)."
                     ) from e
                 time.sleep(0.25)
 
@@ -160,7 +245,9 @@ def run_marker(kb: Keyboard, token: str, settle: float = 1.5) -> str:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--device", default="/dev/hidg0")
+    ap.add_argument("--device", default="auto",
+                    help="HID gadget node to write to, or 'auto' (default) to "
+                         "resolve the /dev/hidgN backing the bound HID gadget")
     ap.add_argument("--text", help="type this literal text then Enter")
     ap.add_argument("--run-marker", metavar="TOKEN",
                     help="open Run and drop C:\\Users\\Public\\ub_<TOKEN>.txt")
@@ -170,7 +257,10 @@ def main() -> None:
                          "endpoint before giving up (default: 10)")
     args = ap.parse_args()
 
-    kb = Keyboard(args.device, char_delay=args.char_delay,
+    device = resolve_hid_device(args.device)
+    if device != args.device:
+        print(f"resolved HID device {args.device!r} -> {device}")
+    kb = Keyboard(device, char_delay=args.char_delay,
                   ready_timeout=args.ready_timeout)
     if args.run_marker:
         path = run_marker(kb, args.run_marker)

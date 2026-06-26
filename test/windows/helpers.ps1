@@ -50,8 +50,13 @@ function Test-PnpPresent {
         [Parameter(Mandatory)] [string] $ProductId   # e.g. '03EA'
     )
     $match = "VID_${Vid}&PID_${ProductId}"
+    # Require the device to be present AND started (Status 'OK'). A node that is
+    # merely present but failed to start is not a successful enumeration, and on
+    # DENY it must not count as "present". (Stale phantom nodes left by a dropped
+    # usbip2_ude session can report Status 'OK' too -- those are reaped by
+    # Clear-UsbipState between tests; this status gate is the second line.)
     $null -ne (Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue |
-               Where-Object { $_.InstanceId -match $match })
+               Where-Object { $_.InstanceId -match $match -and $_.Status -eq 'OK' })
 }
 
 function Get-FilterRejectionEvents {
@@ -116,8 +121,28 @@ function Get-PresentNetAdapterNames {
 }
 
 function Clear-UsbipState {
-    # Detach everything and reset the filter so each test starts clean.
-    param([string] $UsbipExe = 'usbip.exe')
+    # Detach everything, remove any lingering PnP nodes for the test VID, and
+    # reset the filter so each test starts clean.
+    #
+    # The PnP removal matters: a usbip2_ude session that drops (e.g. the gadget
+    # is torn down server-side, or the USB/IP connection resets) can leave an
+    # orphaned device node that Windows still reports as present -- and even with
+    # Status 'OK'. Test-PnpPresent would then match that phantom and report a
+    # device that isn't really attached, a false positive on the security-
+    # critical presence oracle. Reap them here (best effort) so every test starts
+    # from a clean PnP slate. Only nodes matching the test VID are touched.
+    param(
+        [string] $UsbipExe = 'usbip.exe',
+        [string] $TestVid  = '16C0'      # VID shared by all test gadgets (devices.py)
+    )
     & $UsbipExe detach --all=closeonly 2>&1 | Out-Null
     & $UsbipExe filter --disable        2>&1 | Out-Null
+
+    $match = "VID_$TestVid"
+    Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue |
+        Where-Object { $_.InstanceId -match $match } |
+        ForEach-Object {
+            try { Remove-PnpDevice -InstanceId $_.InstanceId -Confirm:$false -ErrorAction Stop }
+            catch { }   # node may already be gone, or still held by the driver
+        }
 }

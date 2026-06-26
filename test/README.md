@@ -132,11 +132,25 @@ is empty** — `usbipd` is probably running in *host* mode. vudc gadgets are onl
 offered by `usbipd --device`. The harness swaps the daemon into device mode
 automatically; to do it by hand: `pkill usbipd; usbipd --device -D`.
 
+**A test sees a device as "present" that isn't actually attached (phantom PnP
+node).** When a usbip2_ude session drops — the gadget is torn down server-side,
+or the USB/IP connection resets — Windows can keep the device node around,
+reported by `Get-PnpDevice -PresentOnly` as present and even `Status = OK`. The
+presence oracle would then match that ghost and pass on a device that isn't
+really there. Two defences: `Clear-UsbipState` (run by the `win` fixture around
+every test) now *removes* lingering PnP nodes for the test VID, and
+`Test-PnpPresent` requires the node be present **and** started (`Status = OK`).
+If you still see a stale node, clear it by hand:
+`Get-PnpDevice | ?{ $_.InstanceId -match 'VID_16C0' } | Remove-PnpDevice -Confirm:$false`.
+
 ## What each layer asserts
 
 - **test_matrix.py** — for every (policy, device) it checks three independent
   oracles agree with the reference model in `devices.py`:
   1. attach result, 2. PnP enumeration (deny => not present), 3. event log.
+  "Present" means present **and started** (`Status = OK`): a node that enumerated
+  but failed to start does not count as a successful enumeration, and on deny it
+  must not count as present.
 - **test_robustness.py**
   - malformed descriptors must fail closed (deny + not enumerated),
   - TOCTOU must not let Windows enumerate an HID interface the filter never saw

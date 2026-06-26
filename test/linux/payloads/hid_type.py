@@ -19,9 +19,12 @@ Examples:
 from __future__ import annotations
 
 import argparse
+import atexit
 import errno
 import glob
 import os
+import stat
+import tempfile
 import time
 
 # Writing to /dev/hidgN before the host has selected the configuration and
@@ -126,9 +129,49 @@ def resolve_hid_device(spec: str = "auto", root: str = _GADGET_ROOT) -> str:
                 return node
         except OSError:
             continue
-    raise RuntimeError(
-        f"HID function dev {want} has no matching /dev/hidg* node "
-        f"(have: {', '.join(sorted(glob.glob('/dev/hidg*'))) or 'none'})")
+
+    # No /dev/hidg* node matches the live function's char device. This is the
+    # nastier variant of the stale-node problem: udev/devtmpfs did not create a
+    # node for the current function, and any existing /dev/hidg0 belongs to an
+    # old gadget with a different major (writing to it gives ESHUTDOWN forever).
+    # The configfs dev attribute is authoritative for the bound function, so
+    # create our own node for that major:minor and talk to the live endpoint.
+    return _make_hid_node(maj, minr,
+                          have=sorted(glob.glob("/dev/hidg*")) or ["none"])
+
+
+def _make_hid_node(maj: int, minr: int, have: list[str]) -> str:
+    """Create a throwaway char-device node for the HID function's major:minor.
+
+    Requires CAP_MKNOD (root) -- the same privilege the gadget scripts already
+    need. The node lives in a private temp dir and is unlinked at process exit.
+    """
+    d = tempfile.mkdtemp(prefix="hidg-")
+    path = os.path.join(d, f"hidg-{maj}-{minr}")
+    try:
+        os.mknod(path, stat.S_IFCHR | 0o600, os.makedev(maj, minr))
+    except OSError as e:
+        try:
+            os.rmdir(d)
+        except OSError:
+            pass
+        raise RuntimeError(
+            f"HID function dev {maj}:{minr} has no matching /dev/hidg* node "
+            f"(have: {', '.join(have)}) and creating one failed: {e}. "
+            f"Run as root (CAP_MKNOD), or fix udev so hidg nodes are created."
+        ) from e
+    atexit.register(_safe_cleanup, path, d)
+    print(f"created HID node {path} for {maj}:{minr} "
+          f"(no matching /dev/hidg* existed; have: {', '.join(have)})")
+    return path
+
+
+def _safe_cleanup(path: str, directory: str) -> None:
+    for func, arg in ((os.unlink, path), (os.rmdir, directory)):
+        try:
+            func(arg)
+        except OSError:
+            pass
 
 
 def _udc_state_hint(root: str = _GADGET_ROOT) -> str:

@@ -163,13 +163,18 @@ class LinuxServer:
                  f"bash -c 'source {shlex.quote(self.test_dir)}/gadget_lib.sh; "
                  f"usbip_export {shlex.quote(self.busid)}'")
 
-    def fire_hid_marker(self, token: str, device: str = "/dev/hidg0") -> str:
-        """Inject keystrokes via the attached HID gadget to drop a marker file."""
+    def fire_hid_marker(self, token: str, device: str = "auto") -> str:
+        """Inject keystrokes via the attached HID gadget to drop a marker file.
+
+        device defaults to "auto": hid_type.py resolves the /dev/hidgN backing
+        the bound HID gadget rather than assuming hidg0, which can be a stale
+        node left by a previous gadget (writes to it fail with ESHUTDOWN).
+        """
         return self.run(
             f"python3 {shlex.quote(self.test_dir)}/payloads/hid_type.py "
             f"--device {shlex.quote(device)} --run-marker {shlex.quote(token)}")
 
-    def fire_hid_text(self, text: str, device: str = "/dev/hidg0") -> str:
+    def fire_hid_text(self, text: str, device: str = "auto") -> str:
         return self.run(
             f"python3 {shlex.quote(self.test_dir)}/payloads/hid_type.py "
             f"--device {shlex.quote(device)} --text {shlex.quote(text)}")

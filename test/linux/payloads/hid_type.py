@@ -24,7 +24,6 @@ import errno
 import glob
 import os
 import stat
-import tempfile
 import time
 
 # Writing to /dev/hidgN before the host has selected the configuration and
@@ -144,34 +143,34 @@ def _make_hid_node(maj: int, minr: int, have: list[str]) -> str:
     """Create a throwaway char-device node for the HID function's major:minor.
 
     Requires CAP_MKNOD (root) -- the same privilege the gadget scripts already
-    need. The node lives in a private temp dir and is unlinked at process exit.
+    need. The node is created under /dev and unlinked at process exit.
+
+    It must NOT go on /tmp: that is commonly tmpfs mounted 'nodev', where the
+    kernel refuses to treat the inode as a device and open() fails with EACCES
+    even for root. /dev (devtmpfs) is where device nodes are honoured.
     """
-    d = tempfile.mkdtemp(prefix="hidg-")
-    path = os.path.join(d, f"hidg-{maj}-{minr}")
+    path = f"/dev/.hidg-test-{maj}-{minr}-{os.getpid()}"
     try:
+        if os.path.lexists(path):
+            os.unlink(path)
         os.mknod(path, stat.S_IFCHR | 0o600, os.makedev(maj, minr))
     except OSError as e:
-        try:
-            os.rmdir(d)
-        except OSError:
-            pass
         raise RuntimeError(
             f"HID function dev {maj}:{minr} has no matching /dev/hidg* node "
-            f"(have: {', '.join(have)}) and creating one failed: {e}. "
+            f"(have: {', '.join(have)}) and creating one at {path} failed: {e}. "
             f"Run as root (CAP_MKNOD), or fix udev so hidg nodes are created."
         ) from e
-    atexit.register(_safe_cleanup, path, d)
+    atexit.register(_safe_unlink, path)
     print(f"created HID node {path} for {maj}:{minr} "
           f"(no matching /dev/hidg* existed; have: {', '.join(have)})")
     return path
 
 
-def _safe_cleanup(path: str, directory: str) -> None:
-    for func, arg in ((os.unlink, path), (os.rmdir, directory)):
-        try:
-            func(arg)
-        except OSError:
-            pass
+def _safe_unlink(path: str) -> None:
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
 
 
 def _udc_state_hint(root: str = _GADGET_ROOT) -> str:

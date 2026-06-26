@@ -19,7 +19,15 @@ Examples:
 from __future__ import annotations
 
 import argparse
+import errno
+import os
 import time
+
+# Writing to /dev/hidgN before the host has selected the configuration and
+# enabled the interrupt-IN endpoint fails with ESHUTDOWN ("Cannot send after
+# transport endpoint shutdown"); a busy gadget can also momentarily return
+# EAGAIN. Both mean "not ready yet, retry", not a hard failure.
+_NOT_READY_ERRNOS = frozenset({errno.ESHUTDOWN, errno.EAGAIN})
 
 # Modifier bits (byte 0 of the boot-keyboard report).
 MOD_LSHIFT = 0x02
@@ -65,16 +73,55 @@ def _report(modifier: int = 0, key: int = 0) -> bytes:
 
 
 class Keyboard:
-    def __init__(self, device: str, char_delay: float = 0.01):
+    def __init__(self, device: str, char_delay: float = 0.01,
+                 ready_timeout: float = 10.0):
         self.device = device
         self.char_delay = char_delay
+        self.ready_timeout = ready_timeout
+
+    def _write_reports(self, *reports: bytes) -> None:
+        """Open the gadget and write the report(s), retrying while the host has
+        not yet enabled the HID endpoint.
+
+        After attach the USB *device* enumerates before the HID *interface* is
+        live, so the first write can race the client selecting the configuration
+        / loading its keyboard driver and fail with ESHUTDOWN. We retry until the
+        endpoint accepts the write or ready_timeout elapses, then fail with an
+        actionable message instead of a bare BrokenPipeError.
+        """
+        deadline = time.time() + self.ready_timeout
+        while True:
+            try:
+                with open(self.device, "wb") as f:
+                    for r in reports:
+                        f.write(r)
+                        f.flush()
+                return
+            except OSError as e:
+                if e.errno not in _NOT_READY_ERRNOS:
+                    raise
+                if time.time() >= deadline:
+                    raise RuntimeError(
+                        f"HID endpoint {self.device} never became writable "
+                        f"(errno {e.errno}: {os.strerror(e.errno)}) within "
+                        f"{self.ready_timeout:g}s. The device attached but the "
+                        f"client did not enable the HID interface -- it may still "
+                        f"be loading the keyboard driver, or the gadget was "
+                        f"detached. Increase --ready-timeout if the client is slow."
+                    ) from e
+                time.sleep(0.25)
+
+    def wait_ready(self) -> None:
+        """Block until the client has enabled the HID endpoint (or time out).
+
+        Sends a single all-zero ("no keys pressed") report, which is a harmless
+        readiness probe: it delivers no keystroke but exercises the same write
+        path, so a successful probe means real keystrokes will land.
+        """
+        self._write_reports(_report())
 
     def _send(self, modifier: int, key: int) -> None:
-        with open(self.device, "wb") as f:
-            f.write(_report(modifier, key))
-            f.flush()
-            f.write(_report())  # release
-            f.flush()
+        self._write_reports(_report(modifier, key), _report())  # press, release
         time.sleep(self.char_delay)
 
     def type_text(self, text: str) -> None:
@@ -102,6 +149,7 @@ def run_marker(kb: Keyboard, token: str, settle: float = 1.5) -> str:
     interactive session and the WinRM session agree on the path).
     """
     path = f"C:\\Users\\Public\\ub_{token}.txt"
+    kb.wait_ready()  # let the client finish enabling the HID interface
     kb.open_run_dialog()
     time.sleep(settle)
     kb.type_text(f"cmd /c echo pwned>{path}")
@@ -117,13 +165,18 @@ def main() -> None:
     ap.add_argument("--run-marker", metavar="TOKEN",
                     help="open Run and drop C:\\Users\\Public\\ub_<TOKEN>.txt")
     ap.add_argument("--char-delay", type=float, default=0.01)
+    ap.add_argument("--ready-timeout", type=float, default=10.0,
+                    help="seconds to wait for the client to enable the HID "
+                         "endpoint before giving up (default: 10)")
     args = ap.parse_args()
 
-    kb = Keyboard(args.device, char_delay=args.char_delay)
+    kb = Keyboard(args.device, char_delay=args.char_delay,
+                  ready_timeout=args.ready_timeout)
     if args.run_marker:
         path = run_marker(kb, args.run_marker)
         print(f"fired run-marker -> {path}")
     elif args.text:
+        kb.wait_ready()  # let the client finish enabling the HID interface
         kb.type_text(args.text)
         kb.press_enter()
         print(f"typed {len(args.text)} chars")

@@ -13,12 +13,22 @@ Run: pytest test/test_matrix.py -v
 from __future__ import annotations
 
 import itertools
+import time
 
 import pytest
 
 from devices import DEVICES, POLICIES, VID, expected_allow
 
 _CASES = list(itertools.product(POLICIES.keys(), DEVICES.keys()))
+
+
+def _wait(predicate, timeout: float = 20.0, interval: float = 1.0) -> bool:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if predicate():
+            return True
+        time.sleep(interval)
+    return False
 
 
 def _set_policy(win, policy: str) -> None:
@@ -40,7 +50,16 @@ def test_decision(linux, win, policy, device_key):
     _set_policy(win, policy)
 
     attached = win.attach(linux.busid)
-    present = win.pnp_present(VID, dev.pid)
+
+    # Allow: a successful attach only creates the USB/IP node; Windows PnP
+    # enumeration + function-driver load happen asynchronously after that, so
+    # retry rather than racing the stack. Deny: the attach itself fails, so no
+    # device node is ever created -- an immediate absence check is correct (and
+    # the security-critical assertion: a denied device must never enumerate).
+    if should_allow:
+        present = _wait(lambda: win.pnp_present(VID, dev.pid))
+    else:
+        present = win.pnp_present(VID, dev.pid)
 
     assert attached is should_allow, (
         f"attach result mismatch: policy={policy} device={device_key} "

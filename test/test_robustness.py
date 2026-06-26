@@ -21,6 +21,35 @@ VID = "16C0"
 
 MALFORMED_VARIANTS = ["zero_interface", "lying_count", "bad_total_length"]
 
+# How long to watch for a (wrongly) enumerated HID interface after attach, and
+# how often to sample. This guards an *absence* assertion, so unlike the
+# allow-path waits elsewhere it must not stop at the first negative sample: a
+# TOCTOU bypass may enumerate an HID interface only briefly before the device
+# tears it down, so we keep sampling for the whole window and fail closed on the
+# first sighting.
+_TOCTOU_WATCH_SECS = 8.0
+_TOCTOU_SAMPLE_SECS = 0.5
+
+
+def _watch_for_new_hid(win, baseline: set[str],
+                       window: float = _TOCTOU_WATCH_SECS,
+                       interval: float = _TOCTOU_SAMPLE_SECS) -> set[str]:
+    """Poll for the FIRST appearance of any HID device not in ``baseline``.
+
+    Returns the new HID instance ids the moment one is observed, or an empty set
+    if none appear within ``window``. A single check after a fixed sleep can
+    miss a HID interface that enumerates only transiently during a TOCTOU
+    bypass; polling and returning on first sighting catches that race.
+    """
+    deadline = time.time() + window
+    while True:
+        new_hid = win.hid_instance_ids() - baseline
+        if new_hid:
+            return new_hid
+        if time.time() >= deadline:
+            return set()
+        time.sleep(interval)
+
 
 @pytest.mark.parametrize("variant", MALFORMED_VARIANTS)
 def test_malformed_descriptors_fail_closed(linux, win, variant):
@@ -43,7 +72,12 @@ def test_descriptor_toctou_no_bypass(linux, win):
 
     Policy allows ONLY mass_storage. The desired secure outcome is that no HID
     interface that the filter never saw ends up enumerated by Windows. We baseline
-    the present HID devices, attach, then diff: any NEW HID device is a bypass.
+    the present HID devices, attach, then watch for any NEW HID device.
+
+    We poll for the whole watch window and fail on the first new HID device seen,
+    rather than checking once after a fixed sleep: a bypass may enumerate the HID
+    interface only briefly before the device tears it down, and a single late
+    check could miss that transient appearance (a false pass on a security check).
     """
     win.set_policy(allow=["mass_storage"])
     baseline = win.hid_instance_ids()
@@ -52,9 +86,7 @@ def test_descriptor_toctou_no_bypass(linux, win):
     time.sleep(1)
     try:
         win.attach(linux.busid)
-        time.sleep(2)  # let Windows enumerate
-        after = win.hid_instance_ids()
-        new_hid = after - baseline
+        new_hid = _watch_for_new_hid(win, baseline)
         assert not new_hid, (
             "TOCTOU BYPASS: Windows enumerated HID interface(s) the filter never "
             f"evaluated: {sorted(new_hid)}")

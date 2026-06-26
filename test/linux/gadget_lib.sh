@@ -48,9 +48,35 @@ _require_root() {
   fi
 }
 
+# _require_gadget_subsystem: the usb_gadget configfs subsystem must exist before
+# we can create a gadget under it. That directory (${GADGET_ROOT}) is published
+# by the 'libcomposite' kernel module, NOT by mkdir -- it lives at the configfs
+# root, where only registered subsystems may create entries. If libcomposite is
+# not loaded, the g_init mkdir below fails with the cryptic
+#   mkdir: cannot create directory '/sys/kernel/config/usb_gadget': Operation not permitted
+# We try to set it up automatically (mount configfs + modprobe), then fail with
+# an actionable message naming the exact fix if it still is not there.
+_require_gadget_subsystem() {
+  if [[ ! -d "${GADGET_ROOT}" ]]; then
+    mountpoint -q /sys/kernel/config 2>/dev/null \
+      || mount -t configfs none /sys/kernel/config 2>/dev/null || true
+    modprobe libcomposite 2>/dev/null || true
+  fi
+  if [[ ! -d "${GADGET_ROOT}" ]]; then
+    echo "gadget_lib: ${GADGET_ROOT} is absent -- the 'libcomposite' kernel" >&2
+    echo "module is not loaded (it registers the usb_gadget configfs subsystem)." >&2
+    echo "Without it the next mkdir fails with 'Operation not permitted'." >&2
+    echo "Fix on this server (as root):" >&2
+    echo "    modprobe libcomposite      # provides ${GADGET_ROOT}" >&2
+    echo "    modprobe usbip-vudc        # provides the ${UDC_NAME} UDC" >&2
+    exit 1
+  fi
+}
+
 # g_init: create a fresh empty gadget skeleton (idempotent: tears down first).
 g_init() {
   _require_root
+  _require_gadget_subsystem
   g_teardown || true
 
   mkdir -p "${G}"

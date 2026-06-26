@@ -45,7 +45,11 @@ def test_badusb_hid_keystrokes_execute(linux, win):
 
     linux.build_gadget(dev.gadget, vid=f"0x{VID}", pid=f"0x{dev.pid}")
     assert win.attach(linux.busid), "device should attach with filter disabled"
-    assert win.pnp_present(VID, dev.pid)
+    assert _wait(lambda: win.pnp_present(VID, dev.pid)), (
+        f"device attached but Windows never enumerated VID_{VID}&PID_{dev.pid} -> "
+        "attach only creates the USB/IP node; PnP enumeration + function-driver "
+        "load happen asynchronously. If it never appears, check the class driver "
+        "loaded for this device on the client.")
 
     time.sleep(3)  # let Windows finish loading the HID stack
     linux.fire_hid_marker(token)
@@ -65,7 +69,11 @@ def test_mass_storage_payload_readable(linux, win):
     linux.build_gadget(dev.gadget, vid=f"0x{VID}", pid=f"0x{dev.pid}",
                        extra_env={"PAYLOAD_TOKEN": token})
     assert win.attach(linux.busid), "device should attach with filter disabled"
-    assert win.pnp_present(VID, dev.pid)
+    assert _wait(lambda: win.pnp_present(VID, dev.pid)), (
+        f"device attached but Windows never enumerated VID_{VID}&PID_{dev.pid} -> "
+        "attach only creates the USB/IP node; PnP enumeration + function-driver "
+        "load happen asynchronously. If it never appears, check the class driver "
+        "loaded for this device on the client.")
 
     fname = f"ub_{token}.txt"
     assert _wait(lambda: win.removable_marker(fname) is not None), (
@@ -83,7 +91,11 @@ def test_composite_both_channels_live(linux, win):
     linux.build_gadget(dev.gadget, vid=f"0x{VID}", pid=f"0x{dev.pid}",
                        extra_env={"PAYLOAD_TOKEN": token})
     assert win.attach(linux.busid), "device should attach with filter disabled"
-    assert win.pnp_present(VID, dev.pid)
+    assert _wait(lambda: win.pnp_present(VID, dev.pid)), (
+        f"device attached but Windows never enumerated VID_{VID}&PID_{dev.pid} -> "
+        "attach only creates the USB/IP node; PnP enumeration + function-driver "
+        "load happen asynchronously. If it never appears, check the class driver "
+        "loaded for this device on the client.")
 
     fname = f"ub_{token}.txt"
     assert _wait(lambda: win.removable_marker(fname) is not None), (

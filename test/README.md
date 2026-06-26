@@ -134,7 +134,13 @@ automatically; to do it by hand: `pkill usbipd; usbipd --device -D`.
 - **test_robustness.py**
   - malformed descriptors must fail closed (deny + not enumerated),
   - TOCTOU must not let Windows enumerate an HID interface the filter never saw
-    (baseline-diff of present HID devices).
+    (baseline-diff of present HID devices). The check **polls** for the whole
+    watch window and fails on the *first* new HID device seen, rather than
+    sampling once after a fixed sleep: a bypass may enumerate the HID interface
+    only transiently before the device tears it down, and a single late check
+    could miss that and falsely pass. (Contrast the *allow*-path waits in
+    `test_matrix.py` / `test_attack_efficacy.py`, which assert *presence* and so
+    can stop at the first positive sample. An absence assertion cannot.)
 - **test_attack_efficacy.py** (the negative control) — with the filter DISABLED,
   each device's malicious effect must actually fire:
   - BadUSB HID injects keystrokes that run code (a marker file is dropped),

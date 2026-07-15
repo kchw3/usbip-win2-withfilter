@@ -70,14 +70,20 @@ beyond its configured class policy.
 
 ### Phase 0: Establish a trustworthy baseline
 
-- [ ] Record the controller, Kali kernel, USB/IP tools, Windows build, driver
-      binaries, `usbip.exe`, and helper-script versions/hashes in test output.
-- [ ] Run connectivity checks before integration tests and fail on stale Linux or
-      Windows deployment.
-- [ ] Verify policy mutation by reading the policy back after every change.
-- [ ] Assert that cleanup completed and that no test VID PnP nodes remain.
-- [ ] Classify tests explicitly as unit, Tier A integration, Tier B adversarial,
-      efficacy, or hardware-backed.
+- [x] Record the Windows driver binaries, `usbip.exe`, and helper-script paths +
+      SHA256 in test output, with optional hash pins.
+      (`helpers.ps1` `Get-WindowsArtifactManifest`;
+      `test_connectivity.py::test_windows_artifacts_identified_and_helpers_in_sync`)
+- [x] Run connectivity checks before integration tests and fail on stale Linux
+      (`test_linux_deploy_in_sync`) or Windows (`helpers.ps1` hash) deployment.
+- [x] Verify policy mutation by reading the policy back after every change.
+      (`Get-FilterPolicyState`; `WindowsClient.set_policy` raises on mismatch)
+- [x] Assert that cleanup completed and that no test VID PnP nodes remain.
+      (`Clear-UsbipState` now verifies and throws; `WindowsClient.cleanup`)
+- [x] Classify tests explicitly as unit, Tier A integration, Tier B adversarial,
+      efficacy, or hardware-backed. (README + pytest markers/skips)
+- [ ] Also record the Linux kernel / USB-IP tool versions in run output
+      (server-side manifest, still to add).
 
 **Exit criterion:** an infrastructure failure cannot be reported as a filter pass
 or expected filter failure.
@@ -154,19 +160,26 @@ root cause.
 
 ### Phase 3: Harden integration oracles
 
-- [ ] For deny cases, watch throughout a bounded interval for any matching PnP
-      node, regardless of `Status`; a failed-start node still counts as exposure.
-- [ ] Correlate rejection events using a test start timestamp plus VID, PID,
-      server/bus ID, and preferably a per-run identifier.
-- [ ] Assert the rejection reason/class and active whitelist, not only a PID token.
-- [ ] Distinguish filter rejection from network, import, port exhaustion, and
+- [x] For deny cases, watch throughout a bounded interval for any matching PnP
+      node, regardless of `Status`. (`Get-PnpExposure`,
+      `test_matrix._watch_for_pnp_exposure`)
+- [x] Correlate rejection events using a pre-attach `RecordId` cursor plus VID,
+      PID, and busid. (`Get-FilterEventCursor` / `Find-FilterRejectionAfter`;
+      `test_matrix._wait_for_rejection`)
+- [x] Distinguish filter rejection from network, import, port exhaustion, and
       emulator failures using the attach exit code and structured result.
-- [ ] Correlate HID and NIC child devices to the test VID/PID rather than relying
-      only on global baseline differences.
-- [ ] Expand filtered allow cases to network/vendor and the other supported policy
-      categories.
-- [ ] Keep efficacy assertions independent: a composite storage assertion must not
-      be hidden by an expected HID failure.
+      (`AttachResult`, `Invoke-Attach` JSON)
+- [x] Keep efficacy assertions independent: the composite storage assertion is
+      not hidden by an expected HID failure. (done in Phase 2)
+- [x] Correlate HID/NIC child devices to the test VID/PID. (HID: Phase 2
+      `Get-HidChildStatus`.)
+- [ ] Assert the rejection reason/class and active whitelist text, not only that
+      VID/PID/busid appear. (Driver currently logs VID/PID/iface/class; add once
+      the message contract is pinned.)
+- [ ] Expand filtered allow cases to network/vendor and the other supported
+      policy categories in `devices.py`/`test_matrix.py`.
+- [ ] Correlate the NIC efficacy check to the test VID/PID adapter rather than a
+      global adapter-name baseline diff.
 
 **Exit criterion:** stale events, unrelated device churn, failed cleanup, or wrong
 policy/deployment cannot satisfy a test oracle.

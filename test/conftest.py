@@ -72,6 +72,19 @@ class RawGadgetRun:
     busid: str
 
 
+@dataclass(frozen=True)
+class AttachResult:
+    ok: bool
+    exit_code: int
+    output: str
+
+
+@dataclass(frozen=True)
+class FilterPolicyState:
+    mode: str
+    categories: tuple[str, ...]
+
+
 class LinuxServer:
     """Thin SSH wrapper around the gadget scripts on the server."""
 
@@ -351,27 +364,69 @@ class WindowsClient:
             raise RuntimeError(f"[win] ps failed\n{r.std_out.decode()}\n{r.std_err.decode()}")
         return r
 
-    def set_policy(self, *, allow=None, deny_all=False, disable=False) -> None:
+    @staticmethod
+    def _json_output(response) -> dict | list:
+        lines = [ln for ln in response.std_out.decode().splitlines() if ln.strip()]
+        if not lines:
+            raise RuntimeError("expected JSON output from Windows helper, got empty stdout")
+        return json.loads(lines[-1])
+
+    def set_policy(self, *, allow=None, deny_all=False, disable=False) -> FilterPolicyState:
+        expected_mode = "whitelist"
+        expected_categories: tuple[str, ...] = ()
         if disable:
-            self.ps("Set-FilterPolicy -Disable -UsbipExe $UsbipExe")
+            expected_mode = "disabled"
+            r = self.ps("Set-FilterPolicy -Disable -UsbipExe $UsbipExe")
         elif deny_all:
-            self.ps("Set-FilterPolicy -DenyAll -UsbipExe $UsbipExe")
+            r = self.ps("Set-FilterPolicy -DenyAll -UsbipExe $UsbipExe")
         else:
-            joined = ",".join(f"'{c}'" for c in (allow or []))
-            self.ps(f"Set-FilterPolicy -Allow {joined} -UsbipExe $UsbipExe")
+            expected_categories = tuple(sorted(allow or []))
+            joined = ",".join(f"'{c}'" for c in expected_categories)
+            r = self.ps(f"Set-FilterPolicy -Allow {joined} -UsbipExe $UsbipExe")
+
+        raw = self._json_output(r)
+        state = FilterPolicyState(
+            mode=raw["Mode"].lower(),
+            categories=tuple(sorted(raw.get("Categories") or [])),
+        )
+        expected = FilterPolicyState(expected_mode, expected_categories)
+        if state != expected:
+            raise RuntimeError(
+                f"filter policy readback mismatch: intended={expected}, actual={state}")
+        return state
+
+    def attach_result(self, busid: str) -> AttachResult:
+        r = self.ps(f"Invoke-Attach -Server '{self.server}' -BusId '{busid}' "
+                    f"-UsbipExe $UsbipExe | ConvertTo-Json -Compress")
+        raw = self._json_output(r)
+        return AttachResult(ok=bool(raw["Ok"]), exit_code=int(raw["ExitCode"]),
+                            output=str(raw["Output"]))
 
     def attach(self, busid: str) -> bool:
-        r = self.ps(f"(Invoke-Attach -Server '{self.server}' -BusId '{busid}' "
-                    f"-UsbipExe $UsbipExe).Ok")
-        return r.std_out.decode().strip().lower().startswith("true")
+        return self.attach_result(busid).ok
 
     def pnp_present(self, vid: str, pid: str) -> bool:
+        """True only for a present, started node (allow-path usability)."""
         r = self.ps(f"Test-PnpPresent -Vid '{vid}' -ProductId '{pid}'")
         return r.std_out.decode().strip().lower().startswith("true")
 
-    def rejection_logged(self, contains: str) -> bool:
-        r = self.ps(f"Test-RejectionLogged -Contains '{contains}'")
-        return r.std_out.decode().strip().lower().startswith("true")
+    def pnp_exposure(self, vid: str, pid: str) -> list[dict]:
+        """Any present node, regardless of status (deny-path security oracle)."""
+        r = self.ps(f"Get-PnpExposure -Vid '{vid}' -ProductId '{pid}'")
+        return [json.loads(ln) for ln in r.std_out.decode().splitlines() if ln.strip()]
+
+    def event_cursor(self) -> int:
+        r = self.ps("Get-FilterEventCursor")
+        return int(r.std_out.decode().strip())
+
+    def rejection_event_after(
+        self, cursor: int, vid: str, pid: str, busid: str | None = None,
+    ) -> dict | None:
+        bus_arg = f" -BusId '{busid}'" if busid else ""
+        r = self.ps(f"Find-FilterRejectionAfter -AfterRecordId {cursor} "
+                    f"-Vid '{vid}' -ProductId '{pid}'{bus_arg}")
+        out = r.std_out.decode().strip()
+        return json.loads(out.splitlines()[-1]) if out else None
 
     def hid_instance_ids(self) -> set[str]:
         r = self.ps("Get-PresentHidInstanceIds")
@@ -399,8 +454,18 @@ class WindowsClient:
         r = self.ps("Get-PresentNetAdapterNames")
         return {ln.strip() for ln in r.std_out.decode().splitlines() if ln.strip()}
 
+    def artifact_manifest(self) -> list[dict]:
+        r = self.ps(
+            "Get-WindowsArtifactManifest -UsbipExe $UsbipExe "
+            f"-Helpers {self.helpers!r}")
+        raw = self._json_output(r)
+        return raw if isinstance(raw, list) else [raw]
+
     def cleanup(self) -> None:
-        self.ps("Clear-UsbipState -UsbipExe $UsbipExe")
+        r = self.ps("Clear-UsbipState -UsbipExe $UsbipExe")
+        raw = self._json_output(r)
+        if not raw.get("Clean") or raw.get("Remaining") != 0:
+            raise RuntimeError(f"Windows cleanup did not reach a clean state: {raw}")
 
 
 @pytest.fixture()

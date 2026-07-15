@@ -13,6 +13,8 @@ Run: pytest test/test_connectivity.py -v
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import shlex
 import subprocess
@@ -212,6 +214,52 @@ def test_windows_usbip_exe_present(config, win_session):
               f"[bool](Get-Command '{usbip_exe}' -ErrorAction SilentlyContinue)")
     assert out.lower() == "true", (
         f"[windows] usbip_exe={usbip_exe!r} not found/not on PATH on the client")
+
+
+def test_windows_artifacts_identified_and_helpers_in_sync(config, win_session):
+    """Attest the exact helper, CLI, and driver binaries used by the lab.
+
+    The helper must match this checkout. Optional expected SHA256 values in
+    config.ini pin the executable/drivers to a reviewed build; without pins we
+    still require paths + hashes so every run is attributable.
+    """
+    w = config["windows"]
+    helpers = w["helpers"]
+    usbip_exe = w.get("usbip_exe", "usbip.exe")
+    script = (
+        f"$h = Get-Content -Raw -LiteralPath {helpers!r}; "
+        ". ([scriptblock]::Create($h)); "
+        f"Get-WindowsArtifactManifest -UsbipExe {usbip_exe!r} -Helpers {helpers!r}"
+    )
+    raw = _ps(win_session, script).splitlines()[-1]
+    manifest = json.loads(raw)
+    if isinstance(manifest, dict):
+        manifest = [manifest]
+    by_name = {item["Name"]: item for item in manifest}
+
+    required = {"usbip.exe", "helpers.ps1", "usbip2_ude.sys", "usbip2_filter.sys"}
+    assert required <= by_name.keys(), f"artifact manifest incomplete: {manifest}"
+    for name in required:
+        assert by_name[name].get("Path") and by_name[name].get("Sha256"), (
+            f"Windows artifact {name} missing or unhashable: {by_name[name]}")
+
+    local_helpers_hash = hashlib.sha256(
+        (Path(__file__).parent / "windows" / "helpers.ps1").read_bytes()).hexdigest()
+    assert by_name["helpers.ps1"]["Sha256"].lower() == local_helpers_hash, (
+        "Windows helpers.ps1 is out of sync with this checkout: "
+        f"local={local_helpers_hash}, remote={by_name['helpers.ps1']['Sha256']}")
+
+    optional_pins = {
+        "usbip.exe": "expected_usbip_sha256",
+        "usbip2_ude.sys": "expected_ude_sha256",
+        "usbip2_filter.sys": "expected_filter_sha256",
+    }
+    for name, key in optional_pins.items():
+        expected = w.get(key, "").strip().lower()
+        if expected:
+            assert by_name[name]["Sha256"].lower() == expected, (
+                f"{name} hash mismatch: expected [{key}]={expected}, "
+                f"actual={by_name[name]['Sha256']}")
 
 
 def test_windows_can_reach_usbip_server(config, win_session):

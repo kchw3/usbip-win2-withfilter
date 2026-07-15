@@ -8,21 +8,59 @@
 
 $ErrorActionPreference = 'Stop'
 
+function Invoke-UsbipChecked {
+    # PowerShell does not turn a non-zero native executable exit code into a
+    # terminating error. Capture it explicitly so a failed policy mutation or
+    # query cannot silently continue and make the test exercise a stale policy.
+    param(
+        [Parameter(Mandatory)] [string] $UsbipExe,
+        [Parameter(Mandatory)] [string[]] $Arguments
+    )
+    $out = & $UsbipExe @Arguments 2>&1 | Out-String
+    $code = $LASTEXITCODE
+    if ($code -ne 0) {
+        throw "usbip.exe $($Arguments -join ' ') failed with exit $code`n$out"
+    }
+    $out
+}
+
+function Get-FilterPolicyState {
+    # Read the policy back from the driver and return stable machine-readable
+    # JSON rather than making Python parse the CLI's human formatting.
+    param([string] $UsbipExe = 'usbip.exe')
+    $out = Invoke-UsbipChecked -UsbipExe $UsbipExe -Arguments @('filter')
+    $mode = if ($out -match 'Device-type filter:\s+DISABLED') { 'disabled' } else { 'whitelist' }
+    $categories = @()
+    foreach ($line in ($out -split "`r?`n")) {
+        if ($line -match '^\s*\[x\]\s+(\S+)') { $categories += $Matches[1] }
+    }
+    [pscustomobject]@{
+        Mode       = $mode
+        Categories = @($categories | Sort-Object -Unique)
+    } | ConvertTo-Json -Compress
+}
+
 function Set-FilterPolicy {
-    # Examples:
-    #   Set-FilterPolicy -DenyAll
-    #   Set-FilterPolicy -Disable
-    #   Set-FilterPolicy -Allow 'hid','mass_storage'
+    # Mutate, then independently read back from the driver. Returns exactly one
+    # JSON object from Get-FilterPolicyState; callers compare it with the intended
+    # mode/categories before attaching any device.
     param(
         [string[]] $Allow,
         [switch]   $DenyAll,
         [switch]   $Disable,
         [string]   $UsbipExe = 'usbip.exe'
     )
-    if ($Disable) { & $UsbipExe filter --disable; return }
-    if ($DenyAll) { & $UsbipExe filter --deny-all; return }
-    if ($Allow)   { & $UsbipExe filter --allow ($Allow -join ','); return }
-    & $UsbipExe filter   # show
+    if ($Disable) {
+        $null = Invoke-UsbipChecked -UsbipExe $UsbipExe -Arguments @('filter', '--disable')
+    } elseif ($DenyAll) {
+        $null = Invoke-UsbipChecked -UsbipExe $UsbipExe -Arguments @('filter', '--deny-all')
+    } elseif ($Allow) {
+        $null = Invoke-UsbipChecked -UsbipExe $UsbipExe `
+            -Arguments @('filter', '--allow', ($Allow -join ','))
+    } else {
+        throw 'Set-FilterPolicy requires -Disable, -DenyAll, or non-empty -Allow'
+    }
+    Get-FilterPolicyState -UsbipExe $UsbipExe
 }
 
 function Invoke-Attach {
@@ -59,27 +97,64 @@ function Test-PnpPresent {
                Where-Object { $_.InstanceId -match $match -and $_.Status -eq 'OK' })
 }
 
-function Get-FilterRejectionEvents {
-    # Recent System-log entries from the usbip2_ude event source.
-    param([int] $MaxEvents = 10)
-    Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'usbip2_ude' } `
-        -MaxEvents $MaxEvents -ErrorAction SilentlyContinue
+function Get-PnpExposure {
+    # Return ANY currently-present PnP node matching VID/PID, regardless of
+    # Status. For a denied device even a failed-start node is exposure: Windows
+    # observed/published the device, violating the pre-enumeration boundary.
+    param(
+        [Parameter(Mandatory)] [string] $Vid,
+        [Parameter(Mandatory)] [string] $ProductId
+    )
+    $match = "VID_${Vid}&PID_${ProductId}"
+    Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue |
+        Where-Object { $_.InstanceId -match $match } |
+        ForEach-Object {
+            [pscustomobject]@{
+                InstanceId = $_.InstanceId
+                Status     = "$($_.Status)"
+                Class      = "$($_.Class)"
+            } | ConvertTo-Json -Compress
+        }
 }
 
-function Test-RejectionLogged {
-    # True if a recent usbip2_ude event mentions the given hex token (e.g. the PID
-    # '03EA' or a class byte). Tolerant by design: the current driver inserts only
-    # VID/PID/iface/class, not the textual reason.
+function Get-FilterEventCursor {
+    # RecordId is monotonic within a Windows event log. Taking this cursor just
+    # before attach makes it impossible for a stale event with the same PID to
+    # satisfy the rejection oracle.
+    $evt = Get-WinEvent -FilterHashtable @{
+        LogName = 'System'; ProviderName = 'usbip2_ude'
+    } -MaxEvents 1 -ErrorAction SilentlyContinue
+    if ($null -eq $evt) { 0 } else { [long]$evt.RecordId }
+}
+
+function Find-FilterRejectionAfter {
+    # Return one correlated rejection newer than the supplied cursor. Match both
+    # VID and PID, and optionally busid; returns empty output if none exists.
     param(
-        [Parameter(Mandatory)] [string] $Contains,
-        [int] $MaxEvents = 10,
-        [datetime] $Since = [datetime]::MinValue
+        [Parameter(Mandatory)] [long] $AfterRecordId,
+        [Parameter(Mandatory)] [string] $Vid,
+        [Parameter(Mandatory)] [string] $ProductId,
+        [string] $BusId
     )
-    $evts = Get-FilterRejectionEvents -MaxEvents $MaxEvents
-    if ($Since -gt [datetime]::MinValue) {
-        $evts = $evts | Where-Object { $_.TimeCreated -ge $Since }
+    $vidToken = "VID_$Vid"
+    $pidToken = "PID_$ProductId"
+    $events = Get-WinEvent -FilterHashtable @{
+        LogName = 'System'; ProviderName = 'usbip2_ude'
+    } -MaxEvents 100 -ErrorAction SilentlyContinue |
+        Where-Object {
+            $_.RecordId -gt $AfterRecordId -and
+            $_.Message -match [regex]::Escape($vidToken) -and
+            $_.Message -match [regex]::Escape($pidToken) -and
+            ([string]::IsNullOrEmpty($BusId) -or
+             $_.Message -match [regex]::Escape($BusId))
+        } | Select-Object -First 1
+    if ($null -ne $events) {
+        [pscustomobject]@{
+            RecordId   = [long]$events.RecordId
+            TimeCreated = $events.TimeCreated.ToUniversalTime().ToString('o')
+            Message    = $events.Message
+        } | ConvertTo-Json -Compress
     }
-    [bool]($evts | Where-Object { $_.Message -match [regex]::Escape($Contains) })
 }
 
 function Get-PresentHidInstanceIds {
@@ -147,6 +222,50 @@ function Get-PresentNetAdapterNames {
         Select-Object -ExpandProperty Name) -join "`n"
 }
 
+function Get-WindowsArtifactManifest {
+    # Identify exactly what the Windows side is running. Hashes make a stale
+    # helper/executable/driver deployment visible in test output and optionally
+    # comparable with expected values from config.ini.
+    param(
+        [Parameter(Mandatory)] [string] $UsbipExe,
+        [Parameter(Mandatory)] [string] $Helpers
+    )
+
+    function Artifact([string] $Name, [string] $Path) {
+        if ([string]::IsNullOrEmpty($Path) -or !(Test-Path -LiteralPath $Path)) {
+            return [pscustomobject]@{ Name=$Name; Path=$Path; Sha256=$null; Version=$null }
+        }
+        $item = Get-Item -LiteralPath $Path
+        [pscustomobject]@{
+            Name    = $Name
+            Path    = $item.FullName
+            Sha256  = (Get-FileHash -LiteralPath $item.FullName -Algorithm SHA256).Hash.ToLower()
+            Version = "$($item.VersionInfo.FileVersion)"
+        }
+    }
+
+    function DriverPath([string] $Name) {
+        $svc = Get-CimInstance Win32_SystemDriver -Filter "Name='$Name'" `
+            -ErrorAction SilentlyContinue
+        if ($null -eq $svc) { return $null }
+        $path = "$($svc.PathName)".Trim('"')
+        if ($path -match '^\\SystemRoot\\(.+)$') {
+            return Join-Path $env:SystemRoot $Matches[1]
+        }
+        if ($path -match '^System32\\(.+)$') {
+            return Join-Path $env:SystemRoot $path
+        }
+        $path
+    }
+
+    @(
+        Artifact 'usbip.exe' $UsbipExe
+        Artifact 'helpers.ps1' $Helpers
+        Artifact 'usbip2_ude.sys' (DriverPath 'usbip2_ude')
+        Artifact 'usbip2_filter.sys' (DriverPath 'usbip2_filter')
+    ) | ConvertTo-Json -Compress
+}
+
 function Clear-UsbipState {
     # Detach everything, remove any lingering PnP nodes for the test VID, and
     # reset the filter so each test starts clean.
@@ -162,14 +281,25 @@ function Clear-UsbipState {
         [string] $UsbipExe = 'usbip.exe',
         [string] $TestVid  = '16C0'      # VID shared by all test gadgets (devices.py)
     )
+    # Detach is best-effort (it can return non-zero when nothing is attached),
+    # but resetting the policy must succeed.
     & $UsbipExe detach --all=closeonly 2>&1 | Out-Null
-    & $UsbipExe filter --disable        2>&1 | Out-Null
+    $null = Invoke-UsbipChecked -UsbipExe $UsbipExe -Arguments @('filter', '--disable')
 
     $match = "VID_$TestVid"
     Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue |
         Where-Object { $_.InstanceId -match $match } |
         ForEach-Object {
             try { Remove-PnpDevice -InstanceId $_.InstanceId -Confirm:$false -ErrorAction Stop }
-            catch { }   # node may already be gone, or still held by the driver
+            catch { }   # verify below; do not silently accept a surviving node
         }
+
+    Start-Sleep -Milliseconds 300
+    $remaining = @(Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue |
+        Where-Object { $_.InstanceId -match $match } |
+        Select-Object InstanceId, Status, Class)
+    if ($remaining.Count -ne 0) {
+        throw "Clear-UsbipState left test PnP nodes present: $($remaining | ConvertTo-Json -Compress)"
+    }
+    [pscustomobject]@{ Clean=$true; Remaining=0 } | ConvertTo-Json -Compress
 }

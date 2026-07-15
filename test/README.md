@@ -149,12 +149,20 @@ If you still see a stale node, clear it by hand:
 
 ## What each layer asserts
 
-- **test_matrix.py** — for every (policy, device) it checks three independent
-  oracles agree with the reference model in `devices.py`:
-  1. attach result, 2. PnP enumeration (deny => not present), 3. event log.
-  "Present" means present **and started** (`Status = OK`): a node that enumerated
-  but failed to start does not count as a successful enumeration, and on deny it
-  must not count as present.
+- **test_matrix.py** — for every (policy, device) it checks three independent,
+  correlated oracles agree with the reference model in `devices.py`:
+  1. **attach result** — the intended policy is read back from the driver
+     (`Set-FilterPolicy` returns the driver's own state and the harness raises on
+     mismatch), so each row proves *which* policy it exercised. The attach is
+     captured with its exit code, not just a boolean.
+  2. **PnP** — on *allow*, the node must be present **and started** (`Status =
+     OK`), sampled with a wait since enumeration is asynchronous. On *deny*, the
+     harness watches the whole window for **any** matching node regardless of
+     status (`Get-PnpExposure`): a failed-start or transient node is still
+     exposure, and an absence assertion cannot stop at the first negative sample.
+  3. **event log** — a cursor (`RecordId`) is taken immediately before attach and
+     the rejection must be **newer** than it and match VID *and* PID *and* busid,
+     so a stale event with the same PID cannot satisfy the oracle.
 - **test_robustness.py**
   - malformed descriptors must fail closed (deny + not enumerated),
   - TOCTOU must not let Windows enumerate an HID interface the filter never saw

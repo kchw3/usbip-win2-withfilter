@@ -15,6 +15,19 @@ import time
 
 import pytest
 
+# The Raw Gadget transport, readiness protocol, and transcript oracles are now
+# implemented (linux/raw_gadget/_raw_gadget.py, _runner.py; conftest
+# start_raw_gadget). They still require one-time lab bring-up and validation on a
+# real kernel + Windows client -- in particular confirming the raw_gadget UDC
+# names for the server's kernel and that the fault-injection canaries go red --
+# before they can be trusted as security gates. Keep them skipped until that
+# bring-up is signed off (VALIDATION_PLAN.md phase 1). Enabling them prematurely
+# risks interpreting infra failures as security passes.
+pytestmark = pytest.mark.skip(
+    reason="Tier B pending lab bring-up/validation on real kernel + client; "
+           "see VALIDATION_PLAN.md phase 1",
+)
+
 MALFORMED_PID = "03F1"
 TOCTOU_PID = "03F0"
 VID = "16C0"
@@ -51,19 +64,46 @@ def _watch_for_new_hid(win, baseline: set[str],
         time.sleep(interval)
 
 
+def _served_config(transcript: list[dict]) -> bool:
+    """True if the producer actually transferred a CONFIGURATION descriptor.
+
+    Guards against a false-green pass: a deny is only meaningful if the malformed
+    descriptor really reached the filter.
+    """
+    for rec in transcript:
+        if rec.get("event") != "control":
+            continue
+        req = rec.get("request", {})
+        resp = rec.get("response", {})
+        if (req.get("bRequest") == 0x06 and req.get("descriptor_type") == 0x02
+                and resp.get("action") == "write" and resp.get("transferred", 0) > 0):
+            return True
+    return False
+
+
 @pytest.mark.parametrize("variant", MALFORMED_VARIANTS)
 def test_malformed_descriptors_fail_closed(linux, win, variant):
-    """Every malformed variant must be denied and never enumerated."""
+    """Every malformed variant must be denied and never enumerated.
+
+    start_raw_gadget proves the producer is live and exported before we attach,
+    so a deny cannot be an artifact of a producer that never ran.
+    """
     win.set_policy(deny_all=False, allow=["mass_storage", "hid"])  # generous policy
-    linux.start_raw_gadget("malformed_descriptors", env={"VARIANT": variant})
-    time.sleep(1)
+    run = linux.start_raw_gadget(
+        "malformed_descriptors", expected_vid=VID, expected_pid=MALFORMED_PID,
+        env={"VARIANT": variant})
     try:
         attached = win.attach(linux.busid)
         present = win.pnp_present(VID, MALFORMED_PID)
         assert not attached, f"variant={variant} unexpectedly attached"
         assert not present, f"variant={variant} unexpectedly enumerated"
+
+        transcript = linux.read_raw_transcript(run)
+        assert _served_config(transcript), (
+            f"variant={variant}: producer never served a config descriptor, so a "
+            "deny does not prove fail-closed behaviour (infra failure)")
     finally:
-        log = linux.stop_raw_gadget("malformed_descriptors")
+        log = linux.stop_raw_gadget(run)
         print(f"[server log:{variant}]\n{log}")
 
 
@@ -82,14 +122,44 @@ def test_descriptor_toctou_no_bypass(linux, win):
     win.set_policy(allow=["mass_storage"])
     baseline = win.hid_instance_ids()
 
-    linux.start_raw_gadget("toctou")
-    time.sleep(1)
+    run = linux.start_raw_gadget("toctou", expected_vid=VID, expected_pid=TOCTOU_PID)
     try:
         win.attach(linux.busid)
         new_hid = _watch_for_new_hid(win, baseline)
+
+        # Primary oracle: the transcript must show the filter's two benign
+        # fetches, and any later malicious descriptor delivery is itself a
+        # bypass -- we do not depend solely on HID interface enumeration, which
+        # this EP0-only producer cannot fully drive.
+        transcript = linux.read_raw_transcript(run)
+        assert not _served_malicious_after_snapshot(transcript), (
+            "TOCTOU BYPASS: a changed (malicious) configuration descriptor was "
+            "delivered to the client after the filter's benign snapshot")
         assert not new_hid, (
             "TOCTOU BYPASS: Windows enumerated HID interface(s) the filter never "
             f"evaluated: {sorted(new_hid)}")
     finally:
-        log = linux.stop_raw_gadget("toctou")
+        log = linux.stop_raw_gadget(run)
         print(f"[server log:toctou]\n{log}")
+
+
+def _served_malicious_after_snapshot(transcript: list[dict]) -> bool:
+    """True if a CONFIGURATION descriptor differing from the filter's first
+    snapshot was later transferred to the client (the TOCTOU condition itself).
+    """
+    snapshot: str | None = None
+    for rec in transcript:
+        if rec.get("event") != "control":
+            continue
+        req = rec.get("request", {})
+        resp = rec.get("response", {})
+        if not (req.get("bRequest") == 0x06 and req.get("descriptor_type") == 0x02):
+            continue
+        served = resp.get("planned_hex")
+        if resp.get("action") != "write" or not served:
+            continue
+        if snapshot is None:
+            snapshot = served
+        elif served != snapshot:
+            return True
+    return False

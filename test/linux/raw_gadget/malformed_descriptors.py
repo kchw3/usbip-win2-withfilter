@@ -18,7 +18,8 @@ from __future__ import annotations
 import os
 
 import usb_descriptors as d
-from _raw_gadget import GET_DESCRIPTOR, ControlRequest, RawGadget
+from _raw_gadget import GET_DESCRIPTOR, ControlRequest
+from _runner import run_profile
 
 VID, PID = 0x16C0, 0x03F1
 VARIANT = os.environ.get("VARIANT", "zero_interface")
@@ -46,5 +47,4 @@ def on_control(req: ControlRequest) -> bytes | None:
 
 
 if __name__ == "__main__":
-    print(f"raw_gadget malformed profile VARIANT={VARIANT}. Validate ioctls first.")
-    RawGadget().serve(on_control)
+    run_profile(f"malformed:{VARIANT}", on_control, vid=VID, pid=PID)

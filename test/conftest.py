@@ -12,9 +12,13 @@ without lab access still collects cleanly. The pure-unit tests
 from __future__ import annotations
 
 import configparser
+import json
 import os
 import shlex
 import textwrap
+import time
+import uuid
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -55,6 +59,19 @@ def config() -> configparser.ConfigParser:
     return cp
 
 
+@dataclass(frozen=True)
+class RawGadgetRun:
+    """Handle to a verified-live Tier B raw_gadget producer on the server."""
+
+    run_id: str
+    profile: str
+    pid: int
+    run_dir: str
+    vid: str
+    product_id: str
+    busid: str
+
+
 class LinuxServer:
     """Thin SSH wrapper around the gadget scripts on the server."""
 
@@ -62,6 +79,7 @@ class LinuxServer:
         import paramiko  # imported lazily so unit tests don't need it
 
         s = cp["linux"]
+        self._linux_section = s
         self.test_dir = s["test_dir"]
         self.udc = s.get("udc_name", "usbip-vudc.0")
         self.busid = s.get("busid", self.udc)
@@ -179,25 +197,109 @@ class LinuxServer:
             f"python3 {shlex.quote(self.test_dir)}/payloads/hid_type.py "
             f"--device {shlex.quote(device)} --text {shlex.quote(text)}")
 
-    def start_raw_gadget(self, profile: str, env: dict[str, str] | None = None) -> None:
-        """Launch a Tier B raw_gadget profile in the background and export the UDC.
+    def _raw_udc_names(self) -> tuple[str, str]:
+        """raw_gadget INIT driver_name/device_name for the UDC it binds to.
 
-        profile: file under raw_gadget/ without .py (e.g. 'toctou').
+        These are the platform driver/device names, NOT the USB/IP busid. For
+        usbip-vudc they default to ('usbip_vudc', self.udc); for dummy_hcd to
+        ('dummy_udc', 'dummy_udc.0'). Override in config.ini [linux] via
+        raw_udc_driver / raw_udc_device for other kernels.
+        """
+        sec = self._linux_section
+        if "vudc" in self.udc:
+            driver, device = "usbip_vudc", self.udc
+        else:
+            driver, device = "dummy_udc", "dummy_udc.0"
+        return sec.get("raw_udc_driver", driver), sec.get("raw_udc_device", device)
+
+    def start_raw_gadget(
+        self, profile: str, *, expected_vid: str, expected_pid: str,
+        env: dict[str, str] | None = None, timeout: float = 20.0,
+    ) -> "RawGadgetRun":
+        """Launch a Tier B raw_gadget profile and return only once it is proven
+        live and exported.
+
+        This never treats a startup/export failure as success: the caller gets a
+        RawGadgetRun with a verified live producer, or this raises. profile is a
+        file under raw_gadget/ without .py (e.g. 'toctou').
         """
         self.ensure_vudc_ready()
-        envstr = " ".join(f"{k}={shlex.quote(v)}" for k, v in (env or {}).items())
+        run_id = uuid.uuid4().hex
+        run_dir = f"/run/usbip-tierb/{run_id}"
+        driver, device = self._raw_udc_names()
+        full_env = {
+            "RUN_DIR": run_dir, "RUN_ID": run_id,
+            "UDC_DRIVER": driver, "UDC_DEVICE": device,
+            **(env or {}),
+        }
+        envstr = " ".join(f"{k}={shlex.quote(v)}" for k, v in full_env.items())
         rg = f"{self.test_dir}/raw_gadget"
-        self.run(
-            f"cd {shlex.quote(rg)} && {envstr} nohup python3 {shlex.quote(profile)}.py "
-            f">/tmp/{profile}.log 2>&1 & echo started",
-        )
+
+        self.run(f"mkdir -p {shlex.quote(run_dir)}")
+        out = self.run(
+            f"cd {shlex.quote(rg)} && setsid env {envstr} python3 "
+            f"{shlex.quote(profile)}.py >{shlex.quote(run_dir)}/stdout.log "
+            f"2>{shlex.quote(run_dir)}/stderr.log & echo $!")
+        pid = int(out.strip().splitlines()[-1])
+
+        run = RawGadgetRun(run_id=run_id, profile=profile, pid=pid, run_dir=run_dir,
+                           vid=expected_vid, product_id=expected_pid, busid=self.busid)
+        self._await_raw_ready(run, timeout)
+        self._export_verified(expected_vid, expected_pid, timeout)
+        return run
+
+    def _await_raw_ready(self, run: "RawGadgetRun", timeout: float) -> None:
+        deadline = time.time() + timeout
+        last = "(no status.json yet)"
+        while time.time() < deadline:
+            alive = self.run(f"kill -0 {run.pid} 2>/dev/null && echo alive || echo dead",
+                             check=False).strip().endswith("alive")
+            raw = self.run(f"cat {shlex.quote(run.run_dir)}/status.json 2>/dev/null || true",
+                           check=False).strip()
+            if raw:
+                last = raw
+                st = json.loads(raw)
+                if st.get("run_id") != run.run_id:
+                    raise RuntimeError(f"stale raw_gadget status (run_id mismatch): {raw}")
+                if st.get("state") == "error":
+                    err = self.run(f"cat {shlex.quote(run.run_dir)}/stderr.log 2>/dev/null || true",
+                                   check=False)
+                    raise RuntimeError(f"raw_gadget producer error: {st.get('error')}\n{err}")
+                if st.get("state") in ("run_ok", "connect") and alive:
+                    return
+            if not alive:
+                err = self.run(f"cat {shlex.quote(run.run_dir)}/stderr.log 2>/dev/null || true",
+                               check=False)
+                raise RuntimeError(f"raw_gadget producer died before ready.\n{err}")
+            time.sleep(0.5)
+        raise RuntimeError(f"raw_gadget {run.profile!r} not ready in {timeout:g}s; "
+                           f"last status: {last}")
+
+    def _export_verified(self, vid: str, pid: str, timeout: float) -> None:
         self.run(f"UDC_NAME={shlex.quote(self.udc)} "
                  f"bash -c 'source {shlex.quote(self.test_dir)}/gadget_lib.sh; "
-                 f"usbip_export {shlex.quote(self.busid)}'", check=False)
+                 f"usbip_export {shlex.quote(self.busid)}'")
+        want = f"{vid.lower()}:{pid.lower()}"
+        deadline = time.time() + timeout
+        listing = ""
+        while time.time() < deadline:
+            listing = self.run("usbip list -r 127.0.0.1 2>/dev/null || true", check=False)
+            if self.busid in listing and want in listing.lower():
+                return
+            time.sleep(1)
+        raise RuntimeError(
+            f"exported device not visible with busid {self.busid} and {want}:\n{listing}")
 
-    def stop_raw_gadget(self, profile: str) -> str:
-        log = self.run(f"cat /tmp/{profile}.log 2>/dev/null || true", check=False)
-        self.run(f"pkill -f {shlex.quote(profile + '.py')} || true", check=False)
+    def read_raw_transcript(self, run: "RawGadgetRun") -> list[dict]:
+        raw = self.run(f"cat {shlex.quote(run.run_dir)}/transcript.jsonl 2>/dev/null || true",
+                       check=False)
+        return [json.loads(ln) for ln in raw.splitlines() if ln.strip()]
+
+    def stop_raw_gadget(self, run: "RawGadgetRun") -> str:
+        log = self.run(f"cat {shlex.quote(run.run_dir)}/stdout.log "
+                       f"{shlex.quote(run.run_dir)}/stderr.log 2>/dev/null || true",
+                       check=False)
+        self.run(f"kill {run.pid} 2>/dev/null || true", check=False)
         return log
 
     def teardown(self) -> None:

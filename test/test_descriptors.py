@@ -11,7 +11,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent / "linux" / "raw_gadget"))
 
+import toctou as toctou_profile  # noqa: E402
 import usb_descriptors as d  # noqa: E402
+from _raw_gadget import GET_DESCRIPTOR, ControlRequest  # noqa: E402
 
 from devices import DEVICES, expected_allow  # noqa: E402
 
@@ -52,6 +54,30 @@ def test_lying_count_config():
     cfg = d.lying_num_interfaces_config()
     assert cfg[4] == 0          # claims zero
     assert _iface_count(cfg) == 1  # but has one
+
+
+def _get_config_request(length: int) -> ControlRequest:
+    return ControlRequest(
+        bmRequestType=0x80,
+        bRequest=GET_DESCRIPTOR,
+        wValue=d.DT_CONFIG << 8,
+        wIndex=0,
+        wLength=length,
+    )
+
+
+def test_toctou_profile_changes_only_after_filter_snapshot():
+    benign = d.benign_mass_storage_config()
+    malicious = d.malicious_ms_plus_hid_config()
+    toctou_profile._config_request_count = 0
+
+    header = toctou_profile.on_control(_get_config_request(9))
+    full = toctou_profile.on_control(_get_config_request(len(benign)))
+    changed = toctou_profile.on_control(_get_config_request(len(malicious)))
+
+    assert header is not None and header[:9] == benign[:9]
+    assert full == benign
+    assert changed == malicious
 
 
 def test_decision_model_composite_requires_both():

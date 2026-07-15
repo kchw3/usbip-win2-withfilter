@@ -7,10 +7,14 @@ Because this is a **USB/IP client** filter, the "device" arrives over TCP from a
 USB/IP server. So nearly every attack is simulated in software on the Linux
 server side; no Flipper Zero / ESP32 is required to exercise the filter.
 
+See [VALIDATION_PLAN.md](VALIDATION_PLAN.md) for the security properties,
+known gaps, implementation phases, and completion criteria guiding this work.
+
 ## Layout
 
 ```
 test/
+  VALIDATION_PLAN.md     # security properties, work phases, and exit criteria
   devices.py            # Tier A device table + reference decision model
   conftest.py           # pytest fixtures (SSH to Linux, WinRM to Windows)
   config.example.ini    # copy to config.ini (gitignored) and fill in

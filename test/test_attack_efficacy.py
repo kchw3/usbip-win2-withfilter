@@ -36,25 +36,39 @@ def _wait(predicate, timeout: float = 20.0, interval: float = 1.0) -> bool:
     return False
 
 
-# Known limitation (see test/README.md "Known design limits"). Keystroke
-# injection works by writing 8-byte boot-keyboard reports to the gadget's
-# /dev/hidgN, which only succeeds while the gadget's HID interrupt-IN endpoint
-# is enabled. When the Windows usbip2_ude client is the USB host -- over EITHER
-# usbip-vudc OR dummy_hcd + usbip-host -- that endpoint never becomes writable:
-# every write fails with ESHUTDOWN, even though the device reaches state
-# 'configured'. The identical gadget works when a native Linux host drives it,
-# so this is a property of how the client handles the HID interrupt-IN endpoint,
-# not of the gadget or this harness. The HID *enumeration* (allow/deny) behaviour
-# is still fully covered by test_matrix.py; only the live *injection* channel is
-# affected. Marked xfail (non-strict) so the suite stays green and flips to
-# XPASS if/when the client enables the endpoint.
-_HID_INJECTION_XFAIL = pytest.mark.xfail(
-    reason="usbip2_ude client does not enable the gadget HID interrupt-IN "
-           "endpoint; /dev/hidgN writes fail with ESHUTDOWN (see test/README.md)",
-    strict=False)
+# Known limitation, but diagnosed rather than blanket-suppressed. Keystroke
+# injection writes 8-byte boot-keyboard reports to the gadget's /dev/hidgN,
+# which only works while the gadget's HID interrupt-IN endpoint is enabled. In
+# this lab the endpoint is never enabled when the Windows client is the USB host
+# (every write fails with ESHUTDOWN), even though the device reaches state
+# 'configured'.
+#
+# Instead of decorating the whole test xfail -- which would also hide a broken
+# node, a failed attach/enumeration, a storage regression, or a client that was
+# actually fixed -- we run every precondition as a hard assertion, then probe the
+# endpoint and xfail ONLY when the probe confirms the specific
+# "endpoint_disabled" (ESHUTDOWN) condition. Any other probe result means the
+# endpoint should work, so injection is then required to succeed (an XPASS if the
+# client is fixed, a real failure otherwise).
 
 
-@_HID_INJECTION_XFAIL
+def _require_injection_or_known_limitation(linux, win, token: str, hid_pid: str) -> None:
+    probe = linux.probe_hid_endpoint()
+    classification = probe.get("classification")
+    if classification == "endpoint_disabled":
+        pytest.xfail(
+            "confirmed client limitation: HID interrupt-IN endpoint never "
+            f"enabled (probe={probe}); see VALIDATION_PLAN.md phase 2")
+
+    # The endpoint is (or should be) usable; injection must therefore succeed.
+    linux.fire_hid_marker(token)
+    assert _wait(lambda: win.public_marker_present(token)), (
+        f"HID endpoint probe classified as {classification!r} (probe={probe}) "
+        f"but keystroke injection did not execute; HID child status: "
+        f"{win.hid_child_status(VID, hid_pid)}")
+    win.remove_public_marker(token)
+
+
 def test_badusb_hid_keystrokes_execute(linux, win):
     """HID gadget injects keystrokes that run code (drops a marker file)."""
     dev = DEVICES["hid_keyboard"]
@@ -71,12 +85,7 @@ def test_badusb_hid_keystrokes_execute(linux, win):
         "loaded for this device on the client.")
 
     time.sleep(3)  # let Windows finish loading the HID stack
-    linux.fire_hid_marker(token)
-
-    assert _wait(lambda: win.public_marker_present(token)), (
-        "BadUSB keystrokes did not execute (marker file never appeared) -> "
-        "the HID simulation may not be wired up; check /dev/hidg0 and layout")
-    win.remove_public_marker(token)
+    _require_injection_or_known_limitation(linux, win, token, dev.pid)
 
 
 def test_mass_storage_payload_readable(linux, win):
@@ -100,14 +109,15 @@ def test_mass_storage_payload_readable(linux, win):
     assert win.removable_marker(fname).strip() == token
 
 
-@_HID_INJECTION_XFAIL  # the HID keystroke channel can't fire through this client
 def test_composite_both_channels_live(linux, win):
-    """Composite gadget: BOTH the storage payload AND keystroke injection fire.
+    """Composite gadget: the storage payload AND keystroke injection fire.
 
-    NOTE: xfail'd for the same reason as test_badusb_hid_keystrokes_execute --
-    the HID injection channel cannot fire through the usbip2_ude client. The
-    storage channel is independently covered by test_mass_storage_payload_readable,
-    so xfail'ing this whole test does not lose storage coverage.
+    The storage channel is asserted unconditionally (independent of the HID
+    limitation), then the HID channel is subject to the same conditional
+    diagnosis as test_badusb_hid_keystrokes_execute: it xfails only if the probe
+    confirms the endpoint-disabled condition, and otherwise must succeed. This
+    keeps storage coverage even when HID is a known xfail, and surfaces a real
+    failure if storage regresses.
     """
     dev = DEVICES["composite_ms_hid"]
     token = _token()
@@ -123,15 +133,13 @@ def test_composite_both_channels_live(linux, win):
         "load happen asynchronously. If it never appears, check the class driver "
         "loaded for this device on the client.")
 
+    # Storage channel: independent hard assertion (no HID dependency).
     fname = f"ub_{token}.txt"
     assert _wait(lambda: win.removable_marker(fname) is not None), (
         "composite storage channel not live")
 
-    time.sleep(3)
-    linux.fire_hid_marker(token)
-    assert _wait(lambda: win.public_marker_present(token)), (
-        "composite HID channel not live (keystrokes did not execute)")
-    win.remove_public_marker(token)
+    time.sleep(3)  # let Windows finish loading the HID stack
+    _require_injection_or_known_limitation(linux, win, token, dev.pid)
 
 
 def test_rogue_nic_appears(linux, win):

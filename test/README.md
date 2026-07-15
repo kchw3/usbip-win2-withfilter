@@ -183,16 +183,23 @@ If you still see a stale node, clear it by hand:
 - The TOCTOU and zero-interface cases probe genuinely uncertain behaviour; a
   failure there is a real finding to file, not a flaky test.
 - **HID keystroke *injection* does not fire through the `usbip2_ude` client**
-  (`test_badusb_hid_keystrokes_execute` and `test_composite_both_channels_live`
-  are `xfail`). Injection writes 8-byte reports to the gadget's `/dev/hidgN`,
-  which only works while the gadget's HID interrupt-IN endpoint is enabled. When
-  the Windows `usbip2_ude` client is the USB host — over **either** `usbip-vudc`
-  **or** `dummy_hcd` + `usbip-host` — that endpoint never becomes writable: every
-  write fails with `ESHUTDOWN`, even though the device reaches `state=configured`.
-  The identical gadget works when a native Linux host drives it (write succeeds
-  on bare `dummy_hcd`), so this is a property of how the client handles the HID
-  interrupt-IN endpoint, not of the gadget or this harness. It is recorded as
-  `xfail` (non-strict) rather than removed: the test still exercises the path and
-  flips to `XPASS` if the client's interrupt-IN handling is fixed. HID
-  *enumeration* (allow/deny) remains fully covered by `test_matrix.py`. This is a
-  candidate driver-side finding to investigate in `usbip2_ude`, not a test bug.
+  (`test_badusb_hid_keystrokes_execute` and `test_composite_both_channels_live`).
+  Injection writes 8-byte reports to the gadget's `/dev/hidgN`, which only works
+  while the gadget's HID interrupt-IN endpoint is enabled. When the Windows
+  `usbip2_ude` client is the USB host — over **either** `usbip-vudc` **or**
+  `dummy_hcd` + `usbip-host` — that endpoint never becomes writable: every write
+  fails with `ESHUTDOWN`, even though the device reaches `state=configured`. The
+  identical gadget works when a native Linux host drives it, so this is a
+  property of how the client handles the HID interrupt-IN endpoint, not of the
+  gadget or this harness.
+
+  This is now **diagnosed, not blanket-suppressed.** Both tests run every
+  precondition (attach, enumeration, and for the composite test the storage
+  channel) as hard assertions, then probe the endpoint with a non-blocking write
+  (`hid_type.py --probe`) and `xfail` **only** when the probe confirms the
+  `endpoint_disabled` (all-`ESHUTDOWN`) condition. Any other probe result
+  (`live`, `no_host_polling`, `unknown`) means the endpoint should work, so
+  injection is then *required* to succeed — a fixed client shows up as a normal
+  pass, and a different regression is a real failure rather than a hidden xfail.
+  HID *enumeration* (allow/deny) remains fully covered by `test_matrix.py`. This
+  is still a candidate driver-side finding to investigate in `usbip2_ude`.

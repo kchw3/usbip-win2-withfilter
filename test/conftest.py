@@ -197,6 +197,17 @@ class LinuxServer:
             f"python3 {shlex.quote(self.test_dir)}/payloads/hid_type.py "
             f"--device {shlex.quote(device)} --text {shlex.quote(text)}")
 
+    def probe_hid_endpoint(self, device: str = "auto") -> dict:
+        """Diagnose the gadget HID interrupt-IN endpoint state.
+
+        Returns hid_type.py's JSON classification (endpoint_disabled /
+        no_host_polling / live / unknown). The JSON is the last stdout line.
+        """
+        out = self.run(
+            f"python3 {shlex.quote(self.test_dir)}/payloads/hid_type.py "
+            f"--device {shlex.quote(device)} --probe")
+        return json.loads(out.strip().splitlines()[-1])
+
     def _raw_udc_names(self) -> tuple[str, str]:
         """raw_gadget INIT driver_name/device_name for the UDC it binds to.
 
@@ -365,6 +376,12 @@ class WindowsClient:
     def hid_instance_ids(self) -> set[str]:
         r = self.ps("Get-PresentHidInstanceIds")
         return {ln.strip() for ln in r.std_out.decode().splitlines() if ln.strip()}
+
+    def hid_child_status(self, vid: str, pid: str) -> list[dict]:
+        """HID child-stack status for a VID/PID (one dict per HID-class node)."""
+        r = self.ps(f"Get-HidChildStatus -Vid '{vid}' -ProductId '{pid}'")
+        out = r.std_out.decode()
+        return [json.loads(ln) for ln in out.splitlines() if ln.strip()]
 
     def removable_marker(self, filename: str) -> str | None:
         r = self.ps(f"Get-RemovableMarker -FileName '{filename}'")

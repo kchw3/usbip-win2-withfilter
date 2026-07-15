@@ -22,6 +22,7 @@ import argparse
 import atexit
 import errno
 import glob
+import json
 import os
 import stat
 import time
@@ -76,6 +77,71 @@ KEYMAP = _build_keymap()
 
 def _report(modifier: int = 0, key: int = 0) -> bytes:
     return bytes([modifier, 0, key, 0, 0, 0, 0, 0])
+
+
+# --- endpoint diagnosis ------------------------------------------------------
+#
+# Distinguishing *why* a HID write fails is what lets the efficacy suite xfail
+# ONLY the confirmed "client never enabled the interrupt-IN endpoint" condition,
+# instead of blanket-xfail'ing (which would also hide a broken node, a detached
+# gadget, or a client that was actually fixed). We probe with a NON-blocking fd
+# so the outcomes are unambiguous:
+#
+#   endpoint_disabled : every write fails with ESHUTDOWN -> the endpoint was
+#                       never enabled (or was disabled). This is the known
+#                       usbip2_ude limitation.
+#   no_host_polling   : a write succeeds (request queued) then EAGAIN -> the
+#                       endpoint is enabled but the host issues no IN token.
+#   live              : writes keep succeeding -> endpoint and polling are up.
+#   unknown           : anything else (report the raw outcomes).
+
+
+def _errno_token(err: int) -> str:
+    if err == errno.ESHUTDOWN:
+        return "eshutdown"
+    if err == errno.EAGAIN:
+        return "eagain"
+    return f"errno_{err}"
+
+
+def classify_endpoint_probe(outcomes: list[str]) -> str:
+    """Pure classifier for a sequence of non-blocking write outcomes."""
+    if not outcomes:
+        return "unknown"
+    uniq = set(outcomes)
+    if uniq == {"ok"}:
+        return "live"
+    if uniq == {"eshutdown"}:
+        return "endpoint_disabled"
+    if "eshutdown" not in uniq and "ok" in uniq and "eagain" in uniq:
+        return "no_host_polling"
+    return "unknown"
+
+
+def probe_endpoint(device: str, *, attempts: int = 3, delay: float = 0.2) -> dict:
+    """Open the HID node non-blocking and classify the interrupt-IN state.
+
+    Returns a JSON-serializable dict; never raises for a merely-disabled
+    endpoint (that is the answer we want), only for an unopenable node.
+    """
+    outcomes: list[str] = []
+    fd = os.open(device, os.O_WRONLY | os.O_NONBLOCK)
+    try:
+        for _ in range(attempts):
+            try:
+                os.write(fd, _report())
+                outcomes.append("ok")
+            except OSError as e:
+                outcomes.append(_errno_token(e.errno))
+            time.sleep(delay)
+    finally:
+        os.close(fd)
+    return {
+        "device": device,
+        "outcomes": outcomes,
+        "classification": classify_endpoint_probe(outcomes),
+        "udc": _udc_state_hint(),
+    }
 
 
 def _node_major_minor(node: str) -> tuple[int, int]:
@@ -293,6 +359,9 @@ def main() -> None:
     ap.add_argument("--text", help="type this literal text then Enter")
     ap.add_argument("--run-marker", metavar="TOKEN",
                     help="open Run and drop C:\\Users\\Public\\ub_<TOKEN>.txt")
+    ap.add_argument("--probe", action="store_true",
+                    help="diagnose the HID interrupt-IN endpoint state and print "
+                         "a JSON classification as the last line (no keystrokes)")
     ap.add_argument("--char-delay", type=float, default=0.01)
     ap.add_argument("--ready-timeout", type=float, default=10.0,
                     help="seconds to wait for the client to enable the HID "
@@ -302,6 +371,13 @@ def main() -> None:
     device = resolve_hid_device(args.device)
     if device != args.device:
         print(f"resolved HID device {args.device!r} -> {device}")
+
+    if args.probe:
+        # JSON must be the LAST line so callers can parse it robustly even after
+        # resolve_hid_device emits diagnostic lines above.
+        print(json.dumps(probe_endpoint(device)))
+        return
+
     kb = Keyboard(device, char_delay=args.char_delay,
                   ready_timeout=args.ready_timeout)
     if args.run_marker:
@@ -313,7 +389,7 @@ def main() -> None:
         kb.press_enter()
         print(f"typed {len(args.text)} chars")
     else:
-        ap.error("one of --text or --run-marker is required")
+        ap.error("one of --text, --run-marker, or --probe is required")
 
 
 if __name__ == "__main__":

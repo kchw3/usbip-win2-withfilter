@@ -137,8 +137,16 @@ Windows filter and produces an attributable decision.
       2. software gadget -> Windows `usbip2_ude`;
       3. physical HID -> Kali `usbip-host` -> Windows;
       4. hardware-backed programmable gadget -> Kali -> Windows.
-- [ ] Replace broad decorators with a precise conditional `pytest.xfail()` only
+- [x] Replace broad decorators with a precise conditional `pytest.xfail()` only
       after all preconditions pass and the known endpoint condition is observed.
+      (`hid_type.py` `--probe` / `classify_endpoint_probe`, `test_attack_efficacy.py`
+      `_require_injection_or_known_limitation`, unit-tested in `test_hid_probe.py`)
+- [x] Add a Windows HID child-stack oracle (status/problem/service), not just the
+      VID/PID parent. (`helpers.ps1` `Get-HidChildStatus`; `conftest.hid_child_status`)
+- [ ] **Lab step:** capture TCP/3240, Linux gadget traces, and Windows WPP to
+      confirm the missing transaction (SET_CONFIGURATION vs interrupt-IN vs
+      filter notification). The non-blocking probe classifies the *symptom*; the
+      captures localize the *cause*.
 
 **Exit criterion:** the first missing or incorrect transaction is identified, and
 “HID client limitation” is either supported by captures or replaced by a narrower

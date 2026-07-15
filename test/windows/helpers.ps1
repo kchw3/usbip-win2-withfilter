@@ -90,6 +90,33 @@ function Get-PresentHidInstanceIds {
         Select-Object -ExpandProperty InstanceId) -join "`n"
 }
 
+function Get-HidChildStatus {
+    # Diagnose the HID *child* stack for a device, not just the VID/PID parent.
+    # A parent that enumerated but whose HID child never started (or loaded no
+    # keyboard driver) cannot deliver keystrokes, so the efficacy test needs to
+    # tell "endpoint loaded but silent" from "no HID child at all". Emits one
+    # JSON object per matching HID-class node (empty output => no HID child).
+    param(
+        [Parameter(Mandatory)] [string] $Vid,        # e.g. '16C0'
+        [Parameter(Mandatory)] [string] $ProductId   # e.g. '03E8'
+    )
+    $match = "VID_${Vid}&PID_${ProductId}"
+    Get-PnpDevice -PresentOnly -Class 'HIDClass' -ErrorAction SilentlyContinue |
+        Where-Object { $_.InstanceId -match $match } |
+        ForEach-Object {
+            $problem = (Get-PnpDeviceProperty -InstanceId $_.InstanceId `
+                -KeyName 'DEVPKEY_Device_ProblemCode' -ErrorAction SilentlyContinue).Data
+            $service = (Get-PnpDeviceProperty -InstanceId $_.InstanceId `
+                -KeyName 'DEVPKEY_Device_Service' -ErrorAction SilentlyContinue).Data
+            [pscustomobject]@{
+                InstanceId = $_.InstanceId
+                Status     = "$($_.Status)"
+                Problem    = "$problem"
+                Service    = "$service"
+            } | ConvertTo-Json -Compress
+        }
+}
+
 function Get-RemovableMarker {
     # Read a marker file from any removable drive. Proves the mass-storage channel
     # is live (the payload seeded on the server image is readable on the client).

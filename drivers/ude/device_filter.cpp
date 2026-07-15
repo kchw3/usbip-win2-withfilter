@@ -3,6 +3,7 @@
  */
 
 #include "device_filter.h"
+#include "device_filter_parser.h"
 #include "trace.h"
 #include "device_filter.tmh"
 
@@ -28,6 +29,11 @@ namespace
 
 using namespace usbip;
 using usbip::device_filter::policy;
+using usbip::device_filter::descriptor_bytes;
+using usbip::device_filter::descriptor_error;
+using usbip::device_filter::descriptor_error_reason;
+using usbip::device_filter::evaluate_configuration;
+using usbip::device_filter::interface_class;
 
 enum : ULONG { MAX_CONFIG_DESCRIPTOR_SIZE = 0xFFFF }; // wTotalLength is UINT16
 
@@ -387,41 +393,27 @@ PAGED NTSTATUS check_configuration(
                 return USBIP_ERROR_DEVICE_FILTERED;
         }
 
-        auto base = buf.get<UCHAR>();
-        auto end = base + full;
-        unsigned interfaces = 0;
+        // Parse and evaluate the fetched snapshot with the shared, side-effect-free
+        // parser (device_filter_parser.h) so the exact production logic can also be
+        // fuzzed off-target. The lambda bridges the parser's class tuple to the
+        // policy whitelist.
+        descriptor_bytes bytes{ buf.get<UCHAR>(), full };
+        auto result = evaluate_configuration(bytes, [&p](const interface_class &i) {
+                return is_allowed(p, i.cls, i.subcls, i.protocol);
+        });
 
-        for (auto cur = base; cur + sizeof(USB_COMMON_DESCRIPTOR) <= end; ) {
-
-                auto d = reinterpret_cast<USB_COMMON_DESCRIPTOR*>(cur);
-
-                if (d->bLength < sizeof(USB_COMMON_DESCRIPTOR) || cur + d->bLength > end) {
-                        report_rejection(ext, udev, p, "malformed descriptor in configuration", -1, 0, 0, 0);
-                        return USBIP_ERROR_DEVICE_FILTERED;
-                }
-
-                if (d->bDescriptorType == USB_INTERFACE_DESCRIPTOR_TYPE &&
-                    d->bLength >= sizeof(USB_INTERFACE_DESCRIPTOR)) {
-
-                        auto &id = *reinterpret_cast<USB_INTERFACE_DESCRIPTOR*>(d);
-                        ++interfaces;
-
-                        if (!is_allowed(p, id.bInterfaceClass, id.bInterfaceSubClass, id.bInterfaceProtocol)) {
-                                report_rejection(ext, udev, p, "interface class not in whitelist",
-                                        id.bInterfaceNumber, id.bInterfaceClass, id.bInterfaceSubClass,
-                                        id.bInterfaceProtocol);
-                                return USBIP_ERROR_DEVICE_FILTERED;
-                        }
-
-                        TraceDbg("%!USTR!: config %u interface %d class/sub/proto %02X/%02X/%02X (%s) allowed",
-                                ext.busid(), cfg_index, id.bInterfaceNumber, id.bInterfaceClass,
-                                id.bInterfaceSubClass, id.bInterfaceProtocol, usb_class_name(id.bInterfaceClass));
-                }
-
-                cur += d->bLength;
+        if (!result) {
+                auto &bad = result.offending_interface;
+                auto is_iface = result.error == descriptor_error::interface_not_allowed;
+                report_rejection(ext, udev, p, descriptor_error_reason(result.error),
+                        is_iface ? bad.number : -1,
+                        is_iface ? bad.cls : 0, is_iface ? bad.subcls : 0,
+                        is_iface ? bad.protocol : 0);
+                return USBIP_ERROR_DEVICE_FILTERED;
         }
 
-        TraceDbg("%!USTR!: configuration %u passed (%u interface(s) checked)", ext.busid(), cfg_index, interfaces);
+        TraceDbg("%!USTR!: configuration %u passed (%u interface(s) checked)",
+                ext.busid(), cfg_index, result.observed_interfaces);
 
         return STATUS_SUCCESS;
 }

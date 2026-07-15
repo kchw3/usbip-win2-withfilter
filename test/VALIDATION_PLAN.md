@@ -186,21 +186,23 @@ policy/deployment cannot satisfy a test oracle.
 
 ### Phase 4: Test the parser directly
 
-- [ ] Extract descriptor parsing/policy evaluation into logic testable without
-      WDF, sockets, or live devices.
-- [ ] Run the actual production parser against byte-level fixtures, not a separate
-      Python interpretation.
-- [ ] Add generated/property/fuzz cases for:
-      - `bNumInterfaces` mismatch and zero-interface configurations;
-      - duplicate interfaces and alternate settings;
-      - invalid, zero, partial, or overflowing descriptor lengths;
-      - short header/full responses and changing `wTotalLength`;
-      - all configurations and configuration indexes;
-      - IAD and class-specific descriptors;
-      - excessive configuration counts/lengths and allocation pressure;
-      - unknown classes, subclasses, protocols, and policy match flags.
+- [x] Extract descriptor parsing/policy evaluation into logic testable without
+      WDF, sockets, or live devices. (`drivers/ude/device_filter_parser.h`,
+      `evaluate_configuration`; the driver's `check_configuration` now calls it.)
+- [x] Run the actual production parser against byte-level fixtures, not a
+      separate Python interpretation. (`test/native/parser_fuzz.cpp` #includes the
+      real header; `test_parser_native.py` compiles + runs it.)
+- [x] Add generated/property/fuzz cases for `bNumInterfaces` mismatch,
+      zero-interface configurations, alternate settings, invalid/zero/partial
+      descriptor lengths, `wTotalLength` mismatch, trailing partial descriptors,
+      and a 50k-iteration property fuzz (allow-all count invariant; allow-none
+      never accepts). Note: this also fixed a real driver gap -- the old walk
+      allowed zero-interface and lying-count configs (vacuous pass).
+- [ ] Extend fuzz coverage to multiple configurations/indexes, IAD and
+      class-specific descriptors, excessive counts/lengths, and unknown
+      subclass/protocol/match-flag combinations.
 - [ ] Add registry/policy corruption, limits, concurrent update/attach, reconnect,
-      and transport-interruption tests.
+      and transport-interruption tests (`load`/`store` in `device_filter.cpp`).
 
 **Exit criterion:** malformed-input coverage runs quickly and deterministically in
 CI, while integration tests cover only kernel/transport/enforcement wiring.

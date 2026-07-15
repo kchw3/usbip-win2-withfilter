@@ -63,6 +63,7 @@
     <ClInclude Include="driver.h" />
     <ClInclude Include="vhci_ioctl.h" />
     <ClInclude Include="device_filter.h" />
+    <ClInclude Include="device_filter_parser.h" />
     <ClInclude Include="trace.h" />
     <ClInclude Include="wsk_context.h" />
     <ClInclude Include="wsk_receive.h" />

@@ -18,11 +18,13 @@ test/
   devices.py            # Tier A device table + reference decision model
   conftest.py           # pytest fixtures (SSH to Linux, WinRM to Windows)
   config.example.ini    # copy to config.ini (gitignored) and fill in
-  test_descriptors.py   # pure unit tests (run anywhere, no lab)
+  test_descriptors.py   # pure unit tests: Python builders + decision model
+  test_parser_native.py # compiles + runs the PRODUCTION C++ parser (unit + fuzz)
   test_connectivity.py  # sanity-checks the config.ini wiring (SSH/WinRM/UDC/port)
   test_matrix.py        # integration: policy x device decision matrix (filter ON)
   test_robustness.py    # integration: attacks #9 (malformed) and #10 (TOCTOU)
   test_attack_efficacy.py # negative control: attacks really work (filter OFF)
+  native/parser_fuzz.cpp # host driver that #includes device_filter_parser.h
   linux/
     gadget_lib.sh       # configfs/libcomposite helpers + usbip export + payload seed
     gadgets/*.sh        # Tier A device builders (hid, ms, composite, cdc, ...)
@@ -163,6 +165,13 @@ If you still see a stale node, clear it by hand:
   3. **event log** — a cursor (`RecordId`) is taken immediately before attach and
      the rejection must be **newer** than it and match VID *and* PID *and* busid,
      so a stale event with the same PID cannot satisfy the oracle.
+- **test_parser_native.py** — compiles `test/native/parser_fuzz.cpp`, which
+  `#include`s the driver's own `drivers/ude/device_filter_parser.h`, and runs it.
+  This tests the *production* parser (not a Python re-implementation) against
+  malformed/inconsistent descriptors plus a 50k-iteration property fuzz that
+  asserts the parser never accepts a device unless every interface is allowed and
+  `bNumInterfaces` matches the distinct interfaces actually present. Skipped only
+  when no C++17 host compiler is available.
 - **test_robustness.py**
   - malformed descriptors must fail closed (deny + not enumerated),
   - TOCTOU must not let Windows enumerate an HID interface the filter never saw
@@ -188,7 +197,12 @@ If you still see a stale node, clear it by hand:
 - The filter has a single **HID** bucket; a whitelisted HID device can still be a
   BadUSB keyboard. The matrix only asserts class-level allow/deny.
 - Vendor-specific (`0xFF`) is allow/deny by class only; content is invisible.
-- The TOCTOU and zero-interface cases probe genuinely uncertain behaviour; a
+- Malformed / inconsistent configuration descriptors now fail closed
+  deterministically: the parser (`device_filter_parser.h`) rejects a
+  zero-interface configuration, a `bNumInterfaces` that disagrees with the
+  interface descriptors actually present, length/`wTotalLength` inconsistencies,
+  and trailing partial descriptors. `test_parser_native.py` pins this behaviour.
+- The TOCTOU case still probes genuinely uncertain end-to-end behaviour; a
   failure there is a real finding to file, not a flaky test.
 - **HID keystroke *injection* does not fire through the `usbip2_ude` client**
   (`test_badusb_hid_keystrokes_execute` and `test_composite_both_channels_live`).

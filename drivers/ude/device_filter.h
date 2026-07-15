@@ -62,8 +62,9 @@ PAGED NTSTATUS store(_In_ const policy &p);
  * Decide whether the remote device may attach.
  *
  * Returns STATUS_SUCCESS if allowed. Returns USBIP_ERROR_DEVICE_FILTERED if the device
- * is blocked by the whitelist (or fails closed). May perform synchronous control
- * transfers on ext.sock to fetch the configuration descriptor(s).
+ * is blocked by the whitelist (or fails closed). Performs synchronous control transfers
+ * on ext.sock to fetch the device + configuration descriptors, validates them against
+ * the import identity/policy, and publishes an immutable snapshot in ext for UdeCx.
  *
  * Must be called after OP_REP_IMPORT (udev is valid, ext.sock is connected) and before
  * the UDECXUSBDEVICE is created/plugged in.

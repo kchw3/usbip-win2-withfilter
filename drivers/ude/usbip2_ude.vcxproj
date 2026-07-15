@@ -39,6 +39,7 @@
     <ClCompile Include="driver.cpp" />
     <ClCompile Include="vhci_ioctl.cpp" />
     <ClCompile Include="device_filter.cpp" />
+    <ClCompile Include="descriptor_patch.cpp" />
     <ClCompile Include="wsk_context.cpp" />
     <ClCompile Include="wsk_receive.cpp" />
   </ItemGroup>
@@ -64,6 +65,7 @@
     <ClInclude Include="vhci_ioctl.h" />
     <ClInclude Include="device_filter.h" />
     <ClInclude Include="device_filter_parser.h" />
+    <ClInclude Include="descriptor_patch.h" />
     <ClInclude Include="trace.h" />
     <ClInclude Include="wsk_context.h" />
     <ClInclude Include="wsk_receive.h" />

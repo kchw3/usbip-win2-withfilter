@@ -41,6 +41,11 @@ enumerated by the OS and no class driver is ever loaded for it.
   device-descriptor class plus **every interface in every configuration**. A device is allowed
   only if *every* class it exposes is in the whitelist. This blocks composite devices that try to
   smuggle a disallowed interface (e.g. a flash drive that also presents a hidden HID keyboard).
+- **Immutable descriptor snapshot.** The driver binds the USB/IP import identity to a freshly
+  fetched device descriptor, validates every configuration, and initializes UdeCx from those exact
+  accepted bytes. Later server responses cannot present Windows with a different device class,
+  interface set, or endpoint layout (descriptor TOCTOU). Any identity/config-count mismatch fails
+  closed.
 - **Fail-closed default.** With no policy configured, the filter denies every device until an
   administrator allows specific types. Any descriptor fetch/parse error also denies the device.
 - **Logging.** Every rejection is written to the **Windows System event log** (source

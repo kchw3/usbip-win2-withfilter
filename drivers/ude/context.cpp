@@ -61,6 +61,16 @@ PAGED void destroy_device_ctx_ext(_In_ WDFOBJECT object)
 
         free(ext.sock);
         free(ext.attr);
+
+        auto &snapshot = ext.descriptors;
+        if (snapshot.configurations) {
+                for (UCHAR i = 0; i < snapshot.configuration_count; ++i) {
+                        if (auto data = snapshot.configurations[i].data) {
+                                ExFreePoolWithTag(data, unique_ptr::pooltag);
+                        }
+                }
+                ExFreePoolWithTag(snapshot.configurations, unique_ptr::pooltag);
+        }
 }
 
 _IRQL_requires_same_

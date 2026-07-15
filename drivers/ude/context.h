@@ -97,12 +97,33 @@ struct device_attributes
  * 
  * Alternative is to claim portnum in vhci_ctx.devices and pass it as SocketContext.
  */
+struct configuration_descriptor_snapshot
+{
+        UCHAR *data;     // NonPagedPoolNx, exact wTotalLength bytes
+        USHORT length;
+};
+
+/*
+ * Immutable device/configuration descriptors accepted by the class filter.
+ * Published (ready=true) only after every configuration validates; UdeCx is
+ * then initialized from these exact bytes so later server responses cannot
+ * change what Windows enumerates.
+ */
+struct descriptor_snapshot
+{
+        USB_DEVICE_DESCRIPTOR device;
+        configuration_descriptor_snapshot *configurations; // NonPagedPoolNx array
+        UCHAR configuration_count;
+        bool ready;
+};
+
 struct device_ctx_ext
 {
         device_ctx *ctx;
         wsk::SOCKET *sock;
 
         device_attributes attr;
+        descriptor_snapshot descriptors;
 
         auto node_name() { return &attr.node_name; }
         auto service_name() { return &attr.service_name; }

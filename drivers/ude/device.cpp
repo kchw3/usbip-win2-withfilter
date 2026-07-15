@@ -507,6 +507,51 @@ PAGED auto prepare_init(_In_ _UDECXUSBDEVICE_INIT *init, _In_ usb_device_speed s
         return STATUS_SUCCESS;
 }
 
+/* Register the immutable descriptor snapshot accepted by the class filter. */
+_IRQL_requires_same_
+_IRQL_requires_(PASSIVE_LEVEL)
+PAGED NTSTATUS add_snapshot_descriptors(
+        _Inout_ _UDECXUSBDEVICE_INIT *init,
+        _In_ const descriptor_snapshot &snapshot)
+{
+        PAGED_CODE();
+
+        // Filtering disabled retains the historical fully-dynamic behaviour.
+        if (!snapshot.ready) {
+                return STATUS_SUCCESS;
+        }
+
+        if (auto err = UdecxUsbDeviceInitAddDescriptor(
+                    init, reinterpret_cast<PUCHAR>(
+                                  const_cast<USB_DEVICE_DESCRIPTOR*>(&snapshot.device)),
+                    static_cast<USHORT>(sizeof(snapshot.device)))) {
+                Trace(TRACE_LEVEL_ERROR,
+                      "UdecxUsbDeviceInitAddDescriptor(device) %!STATUS!", err);
+                return err;
+        }
+
+        for (UCHAR i = 0; i < snapshot.configuration_count; ++i) {
+                auto &config = snapshot.configurations[i];
+                if (!config.data || !config.length) {
+                        Trace(TRACE_LEVEL_ERROR,
+                              "descriptor snapshot config %u is empty", i);
+                        return STATUS_INVALID_DEVICE_STATE;
+                }
+                if (auto err = UdecxUsbDeviceInitAddDescriptorWithIndex(
+                            init, config.data, config.length, i)) {
+                        Trace(TRACE_LEVEL_ERROR,
+                              "UdecxUsbDeviceInitAddDescriptorWithIndex(config %u) "
+                              "%!STATUS!", i, err);
+                        return err;
+                }
+        }
+
+        Trace(TRACE_LEVEL_INFORMATION,
+              "registered immutable descriptor snapshot: device + %u config(s)",
+              snapshot.configuration_count);
+        return STATUS_SUCCESS;
+}
+
 _IRQL_requires_same_
 _IRQL_requires_(PASSIVE_LEVEL)
 PAGED auto create_spin_lock(_Out_ WDFSPINLOCK *handle, _In_ WDFOBJECT parent)
@@ -671,9 +716,12 @@ PAGED NTSTATUS usbip::device::create(_Out_ UDECXUSBDEVICE &device, _In_ WDFDEVIC
 
         device_init_ptr init(vhci);
 
-        if (auto &prop = ext.properties(); 
+        if (auto &prop = ext.properties();
             auto err = init ? prepare_init(init.ptr, prop.speed) : STATUS_INSUFFICIENT_RESOURCES) {
                 Trace(TRACE_LEVEL_ERROR, "UDECXUSBDEVICE_INIT %!STATUS!", err);
+                return err;
+        }
+        if (auto err = add_snapshot_descriptors(init.ptr, ext.descriptors)) {
                 return err;
         }
 

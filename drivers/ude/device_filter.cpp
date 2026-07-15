@@ -4,6 +4,7 @@
 
 #include "device_filter.h"
 #include "device_filter_parser.h"
+#include "descriptor_patch.h"
 #include "trace.h"
 #include "device_filter.tmh"
 
@@ -341,6 +342,61 @@ PAGED NTSTATUS get_descriptor(
         return STATUS_SUCCESS;
 }
 
+/* Fetch the device descriptor and bind it to the OP_REP_IMPORT identity. */
+_IRQL_requires_same_
+_IRQL_requires_(PASSIVE_LEVEL)
+PAGED NTSTATUS snapshot_device_descriptor(
+        _Inout_ device_ctx_ext &ext, _In_ const policy &p,
+        _In_ const usbip_usb_device &udev, _Inout_ ULONG &seqnum)
+{
+        PAGED_CODE();
+
+        USB_DEVICE_DESCRIPTOR device{};
+        UINT16 actual{};
+        if (auto err = get_descriptor(ext, seqnum, USB_DEVICE_DESCRIPTOR_TYPE, 0,
+                                      memory::stack, &device, sizeof(device), actual)) {
+                report_rejection(ext, udev, p, "device descriptor fetch failed",
+                                 -1, 0, 0, 0);
+                return USBIP_ERROR_DEVICE_FILTERED;
+        }
+        if (actual != sizeof(device) || !libdrv::is_valid(device)) {
+                report_rejection(ext, udev, p, "invalid device descriptor",
+                                 -1, 0, 0, 0);
+                return USBIP_ERROR_DEVICE_FILTERED;
+        }
+
+        // OP_REP_IMPORT and GET_DESCRIPTOR are separate server-controlled
+        // messages. Any identity/class/config-count disagreement is already a
+        // TOCTOU/inconsistency and must fail closed before Windows sees either.
+        auto consistent =
+                device.idVendor == udev.idVendor &&
+                device.idProduct == udev.idProduct &&
+                device.bcdDevice == udev.bcdDevice &&
+                device.bDeviceClass == udev.bDeviceClass &&
+                device.bDeviceSubClass == udev.bDeviceSubClass &&
+                device.bDeviceProtocol == udev.bDeviceProtocol &&
+                device.bNumConfigurations == udev.bNumConfigurations;
+        if (!consistent) {
+                report_rejection(ext, udev, p,
+                                 "device descriptor differs from import identity",
+                                 -1, device.bDeviceClass, device.bDeviceSubClass,
+                                 device.bDeviceProtocol);
+                return USBIP_ERROR_DEVICE_FILTERED;
+        }
+
+        // Preserve the existing generated-serial behaviour. The matching string
+        // request remains dynamically served by fill_usb_device_serial().
+        if (auto &props = ext.properties(); *props.serial) {
+                if (!device.iSerialNumber) {
+                        device.iSerialNumber = MAXUCHAR;
+                }
+                props.iserial = device.iSerialNumber;
+        }
+
+        ext.descriptors.device = device;
+        return STATUS_SUCCESS;
+}
+
 /*
  * Fetch and evaluate every interface of one configuration. Fail-closed on any error
  * or malformed descriptor.
@@ -349,7 +405,8 @@ _IRQL_requires_same_
 _IRQL_requires_(PASSIVE_LEVEL)
 PAGED NTSTATUS check_configuration(
         _Inout_ device_ctx_ext &ext, _In_ const policy &p, _In_ const usbip_usb_device &udev,
-        _Inout_ ULONG &seqnum, _In_ UINT8 cfg_index)
+        _Inout_ ULONG &seqnum, _In_ UINT8 cfg_index,
+        _Out_ configuration_descriptor_snapshot &snapshot)
 {
         PAGED_CODE();
 
@@ -412,8 +469,17 @@ PAGED NTSTATUS check_configuration(
                 return USBIP_ERROR_DEVICE_FILTERED;
         }
 
-        TraceDbg("%!USTR!: configuration %u passed (%u interface(s) checked)",
-                ext.busid(), cfg_index, result.observed_interfaces);
+        // Apply the same low/full-speed compatibility transformation that the
+        // live-response path used before snapshots, then publish ownership of
+        // these exact bytes. Class fields are unchanged by the transformation.
+        patch_configuration_for_udecx(buf.get<USB_CONFIGURATION_DESCRIPTOR>(),
+                                      ext.properties().speed);
+        snapshot.data = buf.release<UCHAR>();
+        snapshot.length = full;
+
+        TraceDbg("%!USTR!: configuration %u passed and snapshotted "
+                 "(%u interface(s), %u bytes)",
+                ext.busid(), cfg_index, result.observed_interfaces, full);
 
         return STATUS_SUCCESS;
 }
@@ -546,17 +612,38 @@ PAGED NTSTATUS usbip::device_filter::check_device(_Inout_ device_ctx_ext &ext, _
         }
 
         ULONG seqnum = 1;
+        if (auto err = snapshot_device_descriptor(ext, p, udev, seqnum)) {
+                return err;
+        }
 
-        for (UINT8 i = 0; i < udev.bNumConfigurations; ++i) {
-                if (auto err = check_configuration(ext, p, udev, seqnum, i)) {
+        auto &snapshot = ext.descriptors;
+        auto entries_size = sizeof(*snapshot.configurations) * udev.bNumConfigurations;
+        unique_ptr entries(NonPagedPoolNx, entries_size);
+        if (!entries) {
+                report_rejection(ext, udev, p,
+                                 "out of memory for descriptor snapshot",
+                                 -1, 0, 0, 0);
+                return USBIP_ERROR_DEVICE_FILTERED;
+        }
+        snapshot.configurations = entries.release<configuration_descriptor_snapshot>();
+        snapshot.configuration_count = udev.bNumConfigurations;
+
+        for (UINT8 i = 0; i < snapshot.configuration_count; ++i) {
+                if (auto err = check_configuration(
+                            ext, p, udev, seqnum, i, snapshot.configurations[i])) {
                         return err;
                 }
         }
 
+        // Publish only after every configuration validates. From this point the
+        // snapshot is immutable and lives with device_ctx_ext until detach.
+        snapshot.ready = true;
+
         Trace(TRACE_LEVEL_INFORMATION,
-                "device-type filter: %!USTR!:%!USTR!/%!USTR! VID_%04X&PID_%04X ALLOWED (all %u config(s) passed the whitelist)",
-                ext.node_name(), ext.service_name(), ext.busid(), udev.idVendor, udev.idProduct,
-                udev.bNumConfigurations);
+                "device-type filter: %!USTR!:%!USTR!/%!USTR! VID_%04X&PID_%04X "
+                "ALLOWED and snapshotted (all %u config(s) passed the whitelist)",
+                ext.node_name(), ext.service_name(), ext.busid(), udev.idVendor,
+                udev.idProduct, snapshot.configuration_count);
 
         return STATUS_SUCCESS;
 }

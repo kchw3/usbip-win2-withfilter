@@ -209,15 +209,32 @@ CI, while integration tests cover only kernel/transport/enforcement wiring.
 
 ### Phase 5: Prevent descriptor TOCTOU by design
 
-- [ ] Evaluate serving Windows the exact descriptor snapshot accepted by the
-      filter, for example through UDE descriptor initialization APIs.
-- [ ] Alternatively intercept later descriptor requests and guarantee they return
-      the validated cached bytes.
-- [ ] Bind the snapshot to device identity/session and discard it on reconnect,
-      reset, or re-import.
-- [ ] Make a changed descriptor response fail closed and produce a distinct log.
-- [ ] Use a deterministic userspace USB/IP responder for protocol-level mutation
-      tests if Raw Gadget cannot precisely control the required request sequence.
+- [x] Serve Windows the exact descriptor snapshot accepted by the filter through
+      UdeCx descriptor initialization APIs. (`descriptor_snapshot` in
+      `device_ctx_ext`; `device::add_snapshot_descriptors` calls
+      `UdecxUsbDeviceInitAddDescriptor[WithIndex]` before device creation.)
+- [x] Bind the snapshot to the USB/IP import identity: fetch a fresh device
+      descriptor and require VID/PID/bcdDevice/class/subclass/protocol/config-count
+      equality with `OP_REP_IMPORT`; any mismatch fails closed.
+      (`snapshot_device_descriptor`)
+- [x] Bind the snapshot to the device session/lifetime and discard it on failed
+      attach, detach, or re-import. (nonpaged buffers owned/freed by
+      `device_ctx_ext`; `ready` published only after every config validates.)
+- [x] Preserve existing generated-serial and low/full-speed compatibility
+      behaviour on the cached bytes. (`descriptor_patch.cpp` shared by snapshot
+      and filter-disabled live-response paths.)
+- [x] Strengthen the TOCTOU integration oracle: benign attach must succeed, the
+      transcript must prove two identical filter fetches, and any later changed
+      response is a bypass. (`test_descriptor_toctou_no_bypass`)
+- [x] Use the deterministic Raw Gadget responder for protocol-level mutation
+      tests (implemented Phase 1; still awaiting lab bring-up before un-skip).
+- [ ] **Lab/build validation:** compile the WDK driver with `/WX`; confirm UdeCx
+      accepts indexed configuration snapshots with dynamic endpoints; run the
+      Tier B TOCTOU test and confirm Windows makes no later remote configuration
+      request. The design/code path is complete but this host lacks WDK/lab.
+- [ ] Extend snapshot scope if the threat model requires immutable BOS/string/
+      class-specific descriptors; current security boundary freezes device + all
+      configuration/interface/endpoint descriptors (the class-filter inputs).
 
 **Exit criterion:** the malicious server cannot make Windows observe classes or
 interfaces absent from the descriptor snapshot that passed the filter.

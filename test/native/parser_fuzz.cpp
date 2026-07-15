@@ -39,6 +39,12 @@ std::vector<std::uint8_t> iface(std::uint8_t number, std::uint8_t alt,
     return {9, 0x04, number, alt, 0, cls, sub, proto, 0};
 }
 
+std::vector<std::uint8_t> endpoint(std::uint8_t length = 7) {
+    std::vector<std::uint8_t> out = {length, 0x05, 0x81, 0x03, 8, 0, 10};
+    out.resize(length);
+    return out;
+}
+
 // Build a CONFIGURATION descriptor. num_interfaces/total_override let tests lie.
 std::vector<std::uint8_t> config(const std::vector<std::vector<std::uint8_t>> &ifaces,
                                  int num_interfaces = -1, int total_override = -1) {
@@ -126,6 +132,16 @@ void unit_cases() {
                   descriptor_error::invalid_interface_descriptor,
               "short interface descriptor denied");
     }
+
+    // Endpoint descriptor shorter than USB_ENDPOINT_DESCRIPTOR (7 bytes) must
+    // be denied before the compatibility patch can cast/read through byte 6.
+    check(eval(config({iface(0, 0, 0x03), endpoint(/*length=*/2)},
+                      /*num_interfaces=*/1), hid) ==
+              descriptor_error::invalid_endpoint_descriptor,
+          "short endpoint descriptor denied before patching");
+    check(eval(config({iface(0, 0, 0x03), endpoint()},
+                      /*num_interfaces=*/1), hid) == descriptor_error::none,
+          "valid endpoint descriptor accepted");
 
     // Alternate settings: two descriptors, same interface number => count 1.
     check(eval(config({iface(0, 0, 0x03), iface(0, 1, 0x03)},

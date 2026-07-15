@@ -124,14 +124,22 @@ def test_descriptor_toctou_no_bypass(linux, win):
 
     run = linux.start_raw_gadget("toctou", expected_vid=VID, expected_pid=TOCTOU_PID)
     try:
-        win.attach(linux.busid)
+        attach = win.attach_result(linux.busid)
+        assert attach.ok, (
+            "TOCTOU stimulus never crossed the filter-to-Windows boundary: the "
+            f"benign snapshot should be allowed, but attach failed: {attach}")
         new_hid = _watch_for_new_hid(win, baseline)
 
-        # Primary oracle: the transcript must show the filter's two benign
-        # fetches, and any later malicious descriptor delivery is itself a
-        # bypass -- we do not depend solely on HID interface enumeration, which
-        # this EP0-only producer cannot fully drive.
+        # Primary oracle: prove the filter consumed its two-request benign
+        # snapshot (header + full body), then require that no later changed
+        # descriptor was delivered to Windows. UdeCx should serve the immutable
+        # registered snapshot internally, so no later remote config request is
+        # expected at all.
         transcript = linux.read_raw_transcript(run)
+        configs = _configuration_responses(transcript)
+        assert len(configs) >= 2 and configs[0] == configs[1], (
+            "TOCTOU infrastructure failure: expected two identical benign "
+            f"configuration responses for the filter, got {configs}")
         assert not _served_malicious_after_snapshot(transcript), (
             "TOCTOU BYPASS: a changed (malicious) configuration descriptor was "
             "delivered to the client after the filter's benign snapshot")
@@ -143,23 +151,22 @@ def test_descriptor_toctou_no_bypass(linux, win):
         print(f"[server log:toctou]\n{log}")
 
 
-def _served_malicious_after_snapshot(transcript: list[dict]) -> bool:
-    """True if a CONFIGURATION descriptor differing from the filter's first
-    snapshot was later transferred to the client (the TOCTOU condition itself).
-    """
-    snapshot: str | None = None
+def _configuration_responses(transcript: list[dict]) -> list[str]:
+    responses = []
     for rec in transcript:
         if rec.get("event") != "control":
             continue
         req = rec.get("request", {})
         resp = rec.get("response", {})
-        if not (req.get("bRequest") == 0x06 and req.get("descriptor_type") == 0x02):
-            continue
-        served = resp.get("planned_hex")
-        if resp.get("action") != "write" or not served:
-            continue
-        if snapshot is None:
-            snapshot = served
-        elif served != snapshot:
-            return True
-    return False
+        if (req.get("bRequest") == 0x06 and req.get("descriptor_type") == 0x02
+                and resp.get("action") == "write" and resp.get("planned_hex")):
+            responses.append(resp["planned_hex"])
+    return responses
+
+
+def _served_malicious_after_snapshot(transcript: list[dict]) -> bool:
+    """True if a CONFIGURATION descriptor differing from the filter's first
+    snapshot was later transferred to the client (the TOCTOU condition itself).
+    """
+    responses = _configuration_responses(transcript)
+    return any(response != responses[0] for response in responses[1:]) if responses else False

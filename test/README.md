@@ -174,14 +174,16 @@ If you still see a stale node, clear it by hand:
   when no C++17 host compiler is available.
 - **test_robustness.py**
   - malformed descriptors must fail closed (deny + not enumerated),
-  - TOCTOU must not let Windows enumerate an HID interface the filter never saw
-    (baseline-diff of present HID devices). The check **polls** for the whole
-    watch window and fails on the *first* new HID device seen, rather than
-    sampling once after a fixed sleep: a bypass may enumerate the HID interface
-    only transiently before the device tears it down, and a single late check
-    could miss that and falsely pass. (Contrast the *allow*-path waits in
-    `test_matrix.py` / `test_attack_efficacy.py`, which assert *presence* and so
-    can stop at the first positive sample. An absence assertion cannot.)
+  - TOCTOU must not let Windows observe a descriptor set different from the one
+    the filter accepted. The benign snapshot must attach successfully; the Raw
+    Gadget transcript must show the filter's two identical configuration fetches
+    (header + full body), and **any** later changed response is a bypass. The
+    driver now registers the accepted device/all-configuration snapshot with
+    UdeCx, which should answer Windows internally without a later remote config
+    request. As a secondary oracle the test polls the whole watch window and
+    fails on the first new HID device seen: a transient interface must not evade
+    a single late sample. (An absence assertion cannot stop after its first
+    negative sample.)
 - **test_attack_efficacy.py** (the negative control) — with the filter DISABLED,
   each device's malicious effect must actually fire:
   - BadUSB HID injects keystrokes that run code (a marker file is dropped),

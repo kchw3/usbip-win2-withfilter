@@ -41,6 +41,7 @@ enum class descriptor_error
         descriptor_header_truncated,
         invalid_descriptor_length,
         invalid_interface_descriptor,
+        invalid_endpoint_descriptor,
         no_interfaces,
         interface_count_mismatch,
         interface_not_allowed,
@@ -66,6 +67,7 @@ inline const char *descriptor_error_reason(descriptor_error error)
         case descriptor_error::descriptor_header_truncated:  return "trailing partial descriptor header";
         case descriptor_error::invalid_descriptor_length:    return "invalid descriptor length";
         case descriptor_error::invalid_interface_descriptor: return "short interface descriptor";
+        case descriptor_error::invalid_endpoint_descriptor:  return "short endpoint descriptor";
         case descriptor_error::no_interfaces:                return "configuration has no interfaces";
         case descriptor_error::interface_count_mismatch:     return "bNumInterfaces does not match descriptors";
         case descriptor_error::interface_not_allowed:        return "interface class not in whitelist";
@@ -80,7 +82,8 @@ inline const char *descriptor_error_reason(descriptor_error error)
  * Security invariants enforced here:
  * - the supplied bytes are exactly the wTotalLength snapshot;
  * - every descriptor is fully contained and advances by at least two bytes;
- * - interface descriptors are large enough to contain their class tuple;
+ * - interface and endpoint descriptors are large enough for every field the
+ *   filter / UdeCx compatibility patch reads;
  * - at least one interface exists;
  * - bNumInterfaces equals the number of distinct interface numbers (alternate
  *   settings do not increase that count);
@@ -94,8 +97,10 @@ descriptor_result evaluate_configuration(descriptor_bytes bytes, IsAllowed is_al
 {
         constexpr std::size_t configuration_descriptor_size = 9;
         constexpr std::size_t interface_descriptor_size = 9;
+        constexpr std::size_t endpoint_descriptor_size = 7;
         constexpr std::uint8_t configuration_descriptor_type = 0x02;
         constexpr std::uint8_t interface_descriptor_type = 0x04;
+        constexpr std::uint8_t endpoint_descriptor_type = 0x05;
 
         descriptor_result result;
         if (!bytes.data || bytes.size < configuration_descriptor_size) {
@@ -157,6 +162,13 @@ descriptor_result evaluate_configuration(descriptor_bytes bytes, IsAllowed is_al
                                 result.offending_interface = intf;
                                 return result;
                         }
+                } else if (type == endpoint_descriptor_type &&
+                           length < endpoint_descriptor_size) {
+                        // The UdeCx compatibility patch reads through bInterval
+                        // (byte 6), so a short endpoint must be rejected before
+                        // that cast. Longer audio endpoint descriptors are valid.
+                        result.error = descriptor_error::invalid_endpoint_descriptor;
+                        return result;
                 }
 
                 offset += length;

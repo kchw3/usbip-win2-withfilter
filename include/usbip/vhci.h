@@ -4,7 +4,6 @@
 
 #pragma once
 
-#include <cstddef>
 #include <guiddef.h>
 
 #ifdef _KERNEL_MODE
@@ -17,6 +16,13 @@
 
 #include "ch9.h"
 #include "consts.h"
+
+#if defined(_MSC_VER) || defined(__GNUC__) || defined(__clang__)
+#define USBIP_OFFSETOF(type, member) __builtin_offsetof(type, member)
+#else
+#include <stddef.h>
+#define USBIP_OFFSETOF(type, member) offsetof(type, member)
+#endif
 
 /*
  * Strings encoding is UTF8. 
@@ -62,7 +68,7 @@ struct imported_device_location
         char service[32]; // NI_MAXSERV
         char host[1025];  // NI_MAXHOST in ws2def.h
 };
-static_assert(!offsetof(imported_device_location, port)); // must be the first member
+static_assert(!USBIP_OFFSETOF(imported_device_location, port)); // must be the first member
 
 struct imported_device_properties
 {
@@ -187,7 +193,7 @@ struct get_imported_devices : base
 
 constexpr auto get_imported_devices_size(_In_ ULONG n)
 {
-        return offsetof(get_imported_devices, devices) + n*sizeof(*get_imported_devices::devices);
+        return USBIP_OFFSETOF(get_imported_devices, devices) + n*sizeof(*get_imported_devices::devices);
 }
 
 /*
@@ -206,7 +212,7 @@ struct device_filter : base
 
 constexpr auto device_filter_size(_In_ ULONG n)
 {
-        return offsetof(device_filter, entries) + n*sizeof(*device_filter::entries);
+        return USBIP_OFFSETOF(device_filter, entries) + n*sizeof(*device_filter::entries);
 }
 
 } // namespace usbip::vhci::ioctl
@@ -251,3 +257,5 @@ static_assert(usbip::is_ascii_alnum("1", 2) == 1);
 static_assert(usbip::is_ascii_alnum("1@", 3) < 0);
 static_assert(usbip::is_ascii_alnum("1", 1) == 1);
 static_assert(usbip::is_ascii_alnum("1\0W", 4) == 1);
+
+#undef USBIP_OFFSETOF

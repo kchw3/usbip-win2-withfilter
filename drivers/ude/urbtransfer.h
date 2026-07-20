@@ -4,7 +4,6 @@
 
 #pragma once
 
-#include <cstddef>
 #include <wdm.h>
 #include <usb.h>
 
@@ -15,7 +14,7 @@ struct UrbTransfer
 {
 	using type = _URB_CONTROL_TRANSFER;
 
-	UCHAR Reserved[offsetof(type, PipeHandle)];
+	UCHAR Reserved[__builtin_offsetof(type, PipeHandle)];
 	decltype(type::PipeHandle) PipeHandle;
 	decltype(type::TransferFlags) TransferFlags;
 	decltype(type::TransferBufferLength) TransferBufferLength;

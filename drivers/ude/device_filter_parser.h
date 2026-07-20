@@ -3,33 +3,33 @@
  * Copyright (c) 2026 usbip-win2-withfilter contributors
  *
  * Side-effect-free USB configuration-descriptor parser for the device-type
- * filter. This header intentionally depends only on the C++ standard library:
- * the kernel driver and host-side unit/fuzz tests compile the exact same code.
+ * filter. This header intentionally avoids OS and C++ standard-library headers:
+ * the kernel driver and host-side unit/fuzz tests compile the exact same code
+ * without pulling desktop STL headers into a WDK build.
  */
 
 #pragma once
 
-#include <array>
-#include <cstddef>
-#include <cstdint>
-
 namespace usbip::device_filter
 {
+
+using parser_size_t = decltype(sizeof(0));
+using parser_uint8_t = unsigned char;
 
 /* Minimal view type instead of std::span so host tests can use C++17 compilers. */
 struct descriptor_bytes
 {
-        const std::uint8_t *data{};
-        std::size_t size{};
+        const parser_uint8_t *data{};
+        parser_size_t size{};
 };
 
 struct interface_class
 {
-        std::uint8_t number{};
-        std::uint8_t alternate_setting{};
-        std::uint8_t cls{};
-        std::uint8_t subcls{};
-        std::uint8_t protocol{};
+        parser_uint8_t number{};
+        parser_uint8_t alternate_setting{};
+        parser_uint8_t cls{};
+        parser_uint8_t subcls{};
+        parser_uint8_t protocol{};
 };
 
 enum class descriptor_error
@@ -95,12 +95,12 @@ inline const char *descriptor_error_reason(descriptor_error error)
 template <typename IsAllowed>
 descriptor_result evaluate_configuration(descriptor_bytes bytes, IsAllowed is_allowed)
 {
-        constexpr std::size_t configuration_descriptor_size = 9;
-        constexpr std::size_t interface_descriptor_size = 9;
-        constexpr std::size_t endpoint_descriptor_size = 7;
-        constexpr std::uint8_t configuration_descriptor_type = 0x02;
-        constexpr std::uint8_t interface_descriptor_type = 0x04;
-        constexpr std::uint8_t endpoint_descriptor_type = 0x05;
+        constexpr parser_size_t configuration_descriptor_size = 9;
+        constexpr parser_size_t interface_descriptor_size = 9;
+        constexpr parser_size_t endpoint_descriptor_size = 7;
+        constexpr parser_uint8_t configuration_descriptor_type = 0x02;
+        constexpr parser_uint8_t interface_descriptor_type = 0x04;
+        constexpr parser_uint8_t endpoint_descriptor_type = 0x05;
 
         descriptor_result result;
         if (!bytes.data || bytes.size < configuration_descriptor_size) {
@@ -114,16 +114,16 @@ descriptor_result evaluate_configuration(descriptor_bytes bytes, IsAllowed is_al
                 return result;
         }
 
-        auto total = static_cast<std::size_t>(p[2]) |
-                     (static_cast<std::size_t>(p[3]) << 8);
+        auto total = static_cast<parser_size_t>(p[2]) |
+                     (static_cast<parser_size_t>(p[3]) << 8);
         if (total != bytes.size) {
                 result.error = descriptor_error::total_length_mismatch;
                 return result;
         }
 
         result.declared_interfaces = p[4];
-        std::array<bool, 256> seen_interfaces{};
-        std::size_t offset = 0;
+        bool seen_interfaces[256]{};
+        parser_size_t offset = 0;
         unsigned interface_descriptors = 0;
 
         while (offset < bytes.size) {

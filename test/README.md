@@ -42,8 +42,10 @@ pip install -r test/requirements.txt
 
 Linux USB/IP server (a VM is fine):
 ```
-modprobe libcomposite usbip-vudc      # or dummy_hcd for a "physical" gadget
-modprobe raw_gadget dummy_hcd         # for Tier B
+modprobe libcomposite                 # configfs usb_gadget support
+modprobe usbip-vudc                   # virtual UDC exported by usbipd --device
+modprobe raw_gadget                   # for Tier B
+modprobe dummy_hcd                    # software UDC for dummy_hcd / raw_gadget labs
 apt install usbip                      # usbip + usbipd
 # copy test/linux/ to the server (path goes in config.ini [linux] test_dir)
 ```
@@ -87,6 +89,12 @@ This checks each leg in isolation (SSH to the Linux server, the UDC and
 `test_dir` it expects, WinRM to the Windows client, `helpers.ps1` /
 `usbip.exe` paths, and that the client can reach the USB/IP server's TCP
 port) and fails with a message naming the specific `config.ini` key to fix.
+
+When Linux USB gadget prerequisites are missing, `test_connectivity.py` prompts
+before running the setup over SSH (`modprobe libcomposite`, `modprobe
+usbip-vudc`, `modprobe raw_gadget`, `modprobe dummy_hcd`, and for vudc
+`usbipd --device -D`). For non-interactive runs, set
+`USBIP_TEST_AUTO_FIX=1`. The SSH user must be root or have passwordless sudo.
 
 > It also asserts the server's `test_dir` is **byte-for-byte in sync** with
 > this checkout's `test/linux/` (`test_linux_deploy_in_sync`). The harness runs

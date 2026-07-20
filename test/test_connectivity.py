@@ -19,11 +19,13 @@ import os
 import shlex
 import subprocess
 import sys
+import textwrap
 from pathlib import Path
 
 import pytest
 
 DEFAULT_USBIP_PORT = 3240
+USBIP_AUTO_FIX_ENV = "USBIP_TEST_AUTO_FIX"
 
 # The directory whose contents must match what's deployed to the server's
 # [linux] test_dir. This is the checkout the harness runs from.
@@ -90,6 +92,142 @@ def _ssh_run(client, cmd: str) -> tuple[int, str, str]:
     return rc, out.read().decode(), err.read().decode()
 
 
+_LINUX_USBIP_FIX_ATTEMPTED = False
+
+
+def _linux_uses_vudc(config) -> bool:
+    return "vudc" in config["linux"].get("udc_name", "usbip-vudc.0")
+
+
+def _linux_usbip_issues(config, ssh, *, require_device_mode: bool = False) -> list[str]:
+    udc = config["linux"].get("udc_name", "usbip-vudc.0")
+    check_device_mode = require_device_mode and "vudc" in udc
+    script = textwrap.dedent(f"""
+        set -u
+        udc={shlex.quote(udc)}
+        need_device_mode={'1' if check_device_mode else '0'}
+
+        if [ ! -d /sys/kernel/config/usb_gadget ]; then
+          echo "libcomposite: /sys/kernel/config/usb_gadget is absent"
+        fi
+
+        if [ ! -e "/sys/class/udc/$udc" ]; then
+          echo "udc: /sys/class/udc/$udc is absent"
+        fi
+
+        if [ ! -e /dev/raw-gadget ]; then
+          echo "raw_gadget: /dev/raw-gadget is absent"
+        fi
+
+        if printf '%s\n' "$udc" | grep -q dummy; then
+          if [ ! -e /sys/bus/platform/devices/dummy_hcd.0 ] && \
+             ! ls /sys/class/udc/dummy* >/dev/null 2>&1; then
+            echo "dummy_hcd: no dummy UDC detected"
+          fi
+        fi
+
+        device_mode() {{
+          pgrep -af usbipd | grep -qE -- '(^|[[:space:]])(-e|--device)([[:space:]]|$)'
+        }}
+        if [ "$need_device_mode" = 1 ] && ! device_mode; then
+          echo "usbipd: no device-mode daemon found"
+        fi
+    """)
+    rc, out, err = _ssh_run(ssh, f"bash -c {shlex.quote(script)}")
+    if rc != 0:
+        return [f"preflight check failed: {out}{err}".strip()]
+    return [line.strip() for line in out.splitlines() if line.strip()]
+
+
+def _linux_usbip_fix_script(config, *, require_device_mode: bool) -> str:
+    need_device_mode = require_device_mode and _linux_uses_vudc(config)
+    return textwrap.dedent(f"""
+        set -u
+        as_root() {{
+          if [ "$(id -u)" -eq 0 ]; then
+            "$@"
+          else
+            sudo -n "$@"
+          fi
+        }}
+
+        mountpoint -q /sys/kernel/config 2>/dev/null \
+          || as_root mount -t configfs none /sys/kernel/config
+
+        as_root modprobe libcomposite
+        as_root modprobe usbip_vudc 2>/dev/null || as_root modprobe usbip-vudc 2>/dev/null || true
+        as_root modprobe raw_gadget
+        as_root modprobe dummy_hcd 2>/dev/null || true
+
+        device_mode() {{
+          pgrep -af usbipd | grep -qE -- '(^|[[:space:]])(-e|--device)([[:space:]]|$)'
+        }}
+        if [ {'1' if need_device_mode else '0'} = 1 ]; then
+          if pgrep -x usbipd >/dev/null && ! device_mode; then
+            as_root pkill -x usbipd 2>/dev/null || true
+            sleep 0.5
+          fi
+          if ! device_mode; then
+            as_root usbipd --device -D
+            sleep 0.5
+          fi
+        fi
+
+        echo USBIP-LINUX-FIX-DONE
+    """)
+
+
+def _confirm_linux_usbip_fix(issues: list[str]) -> bool:
+    auto = os.environ.get(USBIP_AUTO_FIX_ENV, "").strip().lower()
+    if auto in {"1", "true", "yes", "y"}:
+        return True
+    if auto in {"0", "false", "no", "n"}:
+        return False
+
+    prompt = (
+        "\nLinux USB/IP prerequisites look incomplete:\n"
+        + "".join(f"  - {issue}\n" for issue in issues)
+        + "\nRun the automatic Linux-side fix over SSH?\n"
+        + "It will run: modprobe libcomposite, usbip-vudc, raw_gadget, "
+          "dummy_hcd, and for usbip-vudc start usbipd --device -D.\n"
+        + "This requires root SSH or passwordless sudo. Apply fix? [y/N] "
+    )
+    try:
+        with open("/dev/tty", "r+", encoding="utf-8") as tty:
+            tty.write(prompt)
+            tty.flush()
+            answer = tty.readline().strip().lower()
+    except OSError:
+        return False
+    return answer in {"y", "yes"}
+
+
+def _maybe_fix_linux_usbip(config, ssh, *, require_device_mode: bool = False) -> None:
+    global _LINUX_USBIP_FIX_ATTEMPTED
+
+    issues = _linux_usbip_issues(config, ssh, require_device_mode=require_device_mode)
+    if not issues or _LINUX_USBIP_FIX_ATTEMPTED:
+        return
+
+    if not _confirm_linux_usbip_fix(issues):
+        return
+
+    _LINUX_USBIP_FIX_ATTEMPTED = True
+    script = _linux_usbip_fix_script(config, require_device_mode=require_device_mode)
+    rc, out, err = _ssh_run(ssh, f"bash -c {shlex.quote(script)}")
+    assert rc == 0 and "USBIP-LINUX-FIX-DONE" in out, (
+        "automatic Linux USB/IP fix failed. The SSH user must be root or have "
+        f"passwordless sudo.\nstdout:\n{out}\nstderr:\n{err}")
+
+
+def _linux_usbip_issue_message(issues: list[str]) -> str:
+    return (
+        "Linux USB/IP prerequisites are incomplete:\n"
+        + "".join(f"  - {issue}\n" for issue in issues)
+        + f"Re-run interactively and accept the prompt, or set {USBIP_AUTO_FIX_ENV}=1 "
+          "to let the connectivity test run the root setup commands over SSH.")
+
+
 def test_linux_ssh_connects(ssh):
     rc, out, err = _ssh_run(ssh, "echo connectivity-ok")
     assert rc == 0 and "connectivity-ok" in out, f"unexpected SSH output: {out!r} {err!r}"
@@ -104,6 +242,7 @@ def test_linux_test_dir_present(config, ssh):
 
 
 def test_linux_udc_available(config, ssh):
+    _maybe_fix_linux_usbip(config, ssh, require_device_mode=_linux_uses_vudc(config))
     udc = config["linux"].get("udc_name", "usbip-vudc.0")
     rc, out, _err = _ssh_run(ssh, f"test -e /sys/class/udc/{udc} && echo found")
     assert rc == 0 and "found" in out, (
@@ -111,7 +250,14 @@ def test_linux_udc_available(config, ssh):
         f"is the gadget UDC module (usbip-vudc / dummy_hcd) loaded?")
 
 
+def test_linux_usbip_gadget_prereqs(config, ssh):
+    _maybe_fix_linux_usbip(config, ssh, require_device_mode=_linux_uses_vudc(config))
+    issues = _linux_usbip_issues(config, ssh, require_device_mode=_linux_uses_vudc(config))
+    assert not issues, _linux_usbip_issue_message(issues)
+
+
 def test_linux_usbipd_listening(config, ssh):
+    _maybe_fix_linux_usbip(config, ssh, require_device_mode=_linux_uses_vudc(config))
     port = config.getint("server", "port", fallback=DEFAULT_USBIP_PORT)
     # Check for a LISTEN socket on the port via ss (with a netstat fallback);
     # both report listening sockets portably, unlike bash's /dev/tcp which only
@@ -132,6 +278,7 @@ def test_linux_usbipd_device_mode(config, ssh):
     udc = config["linux"].get("udc_name", "usbip-vudc.0")
     if "vudc" not in udc:
         pytest.skip(f"udc_name={udc!r} is not a vudc; device-mode check N/A")
+    _maybe_fix_linux_usbip(config, ssh, require_device_mode=True)
     rc, out, _err = _ssh_run(
         ssh,
         "pgrep -af usbipd | grep -qE -- '(^|[[:space:]])(-e|--device)([[:space:]]|$)' "

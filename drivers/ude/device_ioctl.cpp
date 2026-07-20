@@ -219,7 +219,7 @@ auto control_transfer(
 {
         NT_ASSERT(usb_endpoint_type(endp.descriptor) == UsbdPipeTypeControl);
 
-        static_assert(offsetof(_URB_CONTROL_TRANSFER, SetupPacket) == offsetof(_URB_CONTROL_TRANSFER_EX, SetupPacket));
+        static_assert(__builtin_offsetof(_URB_CONTROL_TRANSFER, SetupPacket) == __builtin_offsetof(_URB_CONTROL_TRANSFER_EX, SetupPacket));
         auto &r = urb.UrbControlTransferEx;
 
         if (r.PipeHandle && endp.PipeHandle != r.PipeHandle) { // r.PipeHandle is null if USBD_DEFAULT_PIPE_TRANSFER

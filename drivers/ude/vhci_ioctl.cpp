@@ -697,7 +697,7 @@ PAGED NTSTATUS get_imported_devices(_In_ WDFREQUEST request)
                 return USBIP_ERROR_ABI;
         }
 
-        auto devices_size = outlen - offsetof(vhci::ioctl::get_imported_devices, devices); // size of array
+        auto devices_size = outlen - __builtin_offsetof(vhci::ioctl::get_imported_devices, devices); // size of array
 
         auto max_cnt = devices_size/sizeof(*r->devices);
         NT_ASSERT(max_cnt);
@@ -812,7 +812,7 @@ PAGED NTSTATUS set_device_filter(_In_ WDFREQUEST request)
         } else if (r->size != sizeof(*r)) {
                 Trace(TRACE_LEVEL_ERROR, "device_filter.size %lu != sizeof(device_filter) %Iu", r->size, sizeof(*r));
                 return USBIP_ERROR_ABI;
-        } else if (auto avail = (length - offsetof(vhci::ioctl::device_filter, entries)) / sizeof(*r->entries);
+        } else if (auto avail = (length - __builtin_offsetof(vhci::ioctl::device_filter, entries)) / sizeof(*r->entries);
                    r->count > avail) {
                 return STATUS_INVALID_BUFFER_SIZE;
         } else if (r->count > vhci::ioctl::MAX_DEVICE_FILTER_ENTRIES) {
@@ -850,7 +850,7 @@ PAGED NTSTATUS get_device_filter(_In_ WDFREQUEST request)
         device_filter::policy p;
         device_filter::load(p);
 
-        auto avail = (outlen - offsetof(vhci::ioctl::device_filter, entries)) / sizeof(*r->entries);
+        auto avail = (outlen - __builtin_offsetof(vhci::ioctl::device_filter, entries)) / sizeof(*r->entries);
         if (p.count > avail) {
                 return STATUS_BUFFER_TOO_SMALL;
         }

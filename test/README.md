@@ -90,11 +90,13 @@ This checks each leg in isolation (SSH to the Linux server, the UDC and
 `usbip.exe` paths, and that the client can reach the USB/IP server's TCP
 port) and fails with a message naming the specific `config.ini` key to fix.
 
-When Linux USB gadget prerequisites are missing, `test_connectivity.py` prompts
-before running the setup over SSH (`modprobe libcomposite`, `modprobe
+When Linux USB gadget prerequisites are missing, `test_connectivity.py` runs
+the setup automatically if the Linux SSH user is root. For non-root users it
+prompts before running over SSH (`modprobe libcomposite`, `modprobe
 usbip-vudc`, `modprobe raw_gadget`, `modprobe dummy_hcd`, and for vudc
-`usbipd --device -D`). For non-interactive runs, set
-`USBIP_TEST_AUTO_FIX=1`. The SSH user must be root or have passwordless sudo.
+`usbipd --device -D`). The prompt temporarily suspends pytest capture so it
+is visible during `pytest -v`. For non-interactive sudo runs, set
+`USBIP_TEST_AUTO_FIX=1`. Set `USBIP_TEST_AUTO_FIX=0` to disable auto-fix.
 
 > It also asserts the server's `test_dir` is **byte-for-byte in sync** with
 > this checkout's `test/linux/` (`test_linux_deploy_in_sync`). The harness runs

@@ -81,7 +81,17 @@ pytest test/test_descriptors.py -v
 ```
 
 After creating `test/config.ini`, sanity-check the lab wiring itself before
-running anything that builds gadgets or attaches devices:
+running anything that builds gadgets or attaches devices. Prefer the wrapper so
+Linux module/service prompts happen before pytest starts capturing output:
+```
+python test/run_connectivity.py
+```
+It first checks the Linux USB gadget prerequisites, prints each status, prompts
+before applying fixes, then runs `pytest test/test_connectivity.py -v`. Use
+`python test/run_connectivity.py --yes` for non-interactive setup, or
+`python test/run_connectivity.py -- --maxfail=1 -vv` to pass custom pytest args.
+
+The lower-level command still works when you only want assertions:
 ```
 pytest test/test_connectivity.py -v
 ```
@@ -90,13 +100,11 @@ This checks each leg in isolation (SSH to the Linux server, the UDC and
 `usbip.exe` paths, and that the client can reach the USB/IP server's TCP
 port) and fails with a message naming the specific `config.ini` key to fix.
 
-When Linux USB gadget prerequisites are missing, `test_connectivity.py` runs
-the setup automatically if the Linux SSH user is root. For non-root users it
-prompts before running over SSH (`modprobe libcomposite`, `modprobe
-usbip-vudc`, `modprobe raw_gadget`, `modprobe dummy_hcd`, and for vudc
-`usbipd --device -D`). The prompt temporarily suspends pytest capture so it
-is visible during `pytest -v`. For non-interactive sudo runs, set
-`USBIP_TEST_AUTO_FIX=1`. Set `USBIP_TEST_AUTO_FIX=0` to disable auto-fix.
+When Linux USB gadget prerequisites are missing, the wrapper fix prints verbose
+status such as `not loaded; loading...`, `load success`, or `load FAILED` for
+`libcomposite`, `usbip-vudc`, `raw_gadget`, `dummy_hcd`, and for vudc
+`usbipd --device -D`. Direct pytest runs can also auto-fix with
+`USBIP_TEST_AUTO_FIX=1`; set `USBIP_TEST_AUTO_FIX=0` to disable auto-fix.
 
 > It also asserts the server's `test_dir` is **byte-for-byte in sync** with
 > this checkout's `test/linux/` (`test_linux_deploy_in_sync`). The harness runs

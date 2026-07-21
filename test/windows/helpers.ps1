@@ -385,14 +385,13 @@ function Clear-UsbipState {
         [string] $UsbipExe = 'usbip.exe',
         [string] $TestVid  = '16C0',      # VID shared by all test gadgets (devices.py)
         [ValidateSet('closeonly', 'full', 'skip')]
-        [string] $DetachMode = 'closeonly'
+        [string] $DetachMode = 'skip'
     )
     Write-Output "[cleanup] helpers.ps1 native-timeout revision: async-v3"
-    # Detach is best-effort (it can return non-zero when nothing is attached),
-    # but resetting the policy must succeed. Default to closeonly because some
-    # wedged UdeCx/plugin-out paths can make full detach block before tests even
-    # start; stale VID nodes are still reaped below. Set DetachMode=full when you
-    # specifically need UdecxUsbDevicePlugOutAndDelete before the next attach.
+    # Detach is best-effort and intentionally opt-in for cleanup. In some wedged
+    # UdeCx/plugin-out states even closeonly can block the WinRM cleanup path
+    # before tests start. Stale VID nodes are still reaped below; set
+    # DetachMode=closeonly/full only when you specifically need USB/IP detach.
     if ($DetachMode -eq 'skip') {
         Write-Output "[cleanup] skipping USB/IP detach by request"
     } else {

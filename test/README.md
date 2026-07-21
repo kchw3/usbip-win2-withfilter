@@ -159,34 +159,28 @@ offered by `usbipd --device`. The harness swaps the daemon into device mode
 automatically; to do it by hand: `pkill usbipd; usbipd --device -D`.
 
 **A test sees a device as "present" that isn't actually attached (phantom PnP
-node).** When a usbip2_ude session drops — the gadget is torn down server-side,
-or the USB/IP connection resets — Windows can keep the device node around,
+node).** When a usbip2_ude session drops -- the gadget is torn down server-side,
+or the USB/IP connection resets -- Windows can keep the device node around,
 reported by `Get-PnpDevice -PresentOnly` as present and even `Status = OK`. The
-presence oracle would then match that ghost and pass on a device that isn't
+presence oracle would then match that stale node and pass on a device that isn't
 really there. Two defences: `Clear-UsbipState` (run by the `win` fixture around
-every test) now *removes* lingering PnP nodes for the test VID, and
-`Test-PnpPresent` requires the node be present **and** started (`Status = OK`).
-`Clear-UsbipState` uses full `usbip.exe detach --all` rather than
-`--all=closeonly`, because `closeonly` is intended for reboot/shutdown and only
-drops TCP/IP connections; tests need `UdecxUsbDevicePlugOutAndDelete` so the
-next attach gets a fresh root-hub child path. If you still see a stale node,
-clear it by hand with `Remove-PnpDevice` when available, or with the portable
-`pnputil` fallback: `pnputil /remove-device "HID\VID_16C0&PID_03E8\..."`.
-Run pytest with `-s` to see live `[cleanup]` removal diagnostics. Current
-helpers print `[cleanup] helpers.ps1 native-timeout revision: async-v3` before
-detach; if that line is absent, the Windows VM is still running an older
-`helpers.ps1` copy. If the last line is `[cleanup] detaching all USB/IP ports
-(<mode>)`, the Windows-side `usbip.exe detach` call is stuck. `helpers.ps1` now runs
-native USB/IP and PnP cleanup tools with explicit timeouts and async output
-capture, reports the timeout, and continues to the stale-node cleanup instead of
-letting pytest wait behind WinRM forever. The pytest harness also prints
-`[cleanup] starting Windows cleanup`, runs detach and filter/PnP cleanup as
-separate bounded WinRM phases, and names the phase if one times out; tune
-`[windows] cleanup_timeout` in `test/config.ini` if your VM needs more than the
-default 60 seconds. Cleanup defaults to
-`[windows] cleanup_detach=closeonly` because full UdeCx plug-out can wedge on a
-bad prior import; set it to `full` only when you specifically need a fresh
-UdeCx child path, or `skip` for diagnostics.
+every test) removes lingering PnP nodes for the test VID, and `Test-PnpPresent`
+requires the node be present **and** started (`Status = OK`). If you still see a
+stale node, clear it by hand with `Remove-PnpDevice` when available, or with the
+portable `pnputil` fallback, for example
+`pnputil /remove-device "HID\VID_16C0&PID_03E8\..."`.
+Run pytest with `-s` to see live `[cleanup]` diagnostics. Current helpers print
+`[cleanup] helpers.ps1 native-timeout revision: async-v3` during the
+filter/PnP phase; if that line is absent, the Windows VM is still running an
+older `helpers.ps1` copy. The pytest harness prints `[cleanup] starting Windows
+cleanup`, runs USB/IP detach and filter/PnP cleanup as separate bounded WinRM
+phases, and names the phase if one times out. Cleanup now defaults to
+`[windows] cleanup_detach=skip` because in this lab even
+`detach --all=closeonly` can wedge before the first matrix row. Set it to
+`closeonly` or
+`full` only when you explicitly want the harness to try USB/IP detach; tune
+`[windows] cleanup_timeout` if your VM needs more than the default 60 seconds.
+
 
 **`usbip.exe attach` succeeds but no `VID_16C0` node becomes present in the
 efficacy suite.** We diagnosed one concrete case where manual attach with

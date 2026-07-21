@@ -344,7 +344,7 @@ class WindowsClient:
         self.usbip = w.get("usbip_exe", "usbip.exe")
         self.server = cp["server"]["address"]
         self.cleanup_timeout = w.getfloat("cleanup_timeout", fallback=60.0)
-        self.cleanup_detach = w.get("cleanup_detach", "closeonly").strip().lower()
+        self.cleanup_detach = w.get("cleanup_detach", "skip").strip().lower()
         if self.cleanup_detach not in {"closeonly", "full", "skip"}:
             raise ValueError(
                 "[windows] cleanup_detach must be closeonly, full, or skip")

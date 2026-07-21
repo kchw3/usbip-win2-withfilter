@@ -512,18 +512,39 @@ class WindowsClient:
             return value
         raise value
 
+    @staticmethod
+    def _print_cleanup_output(response) -> None:
+        for line in response.std_out.decode().splitlines():
+            if line.startswith("[cleanup]"):
+                print(line, flush=True)
+
     def cleanup(self) -> None:
         print(
             f"[cleanup] starting Windows cleanup "
             f"(timeout={self.cleanup_timeout:g}s, detach={self.cleanup_detach})",
             flush=True)
+
+        if self.cleanup_detach == "skip":
+            print("[cleanup] skipping USB/IP detach by request", flush=True)
+        else:
+            detach_arg = "--all" if self.cleanup_detach == "full" else "--all=closeonly"
+            print(f"[cleanup] phase: usbip.exe detach {detach_arg}", flush=True)
+            detach_script = (
+                f"$r = Invoke-NativeWithTimeout -FilePath $UsbipExe "
+                f"-Arguments @('detach', '{detach_arg}') -TimeoutSeconds 15\n"
+                "if ($r.TimedOut) { "
+                "Write-Output '[cleanup] usbip.exe detach timed out after 15s' "
+                "} elseif ($r.ExitCode -ne 0) { "
+                "Write-Output ('[cleanup] usbip.exe detach exited ' + $r.ExitCode + ': ' + $r.Output) "
+                "} else { Write-Output '[cleanup] usbip.exe detach completed' }")
+            r = self._ps_with_timeout(detach_script, 25.0, "cleanup detach")
+            self._print_cleanup_output(r)
+
+        print("[cleanup] phase: filter reset and stale PnP reap", flush=True)
         r = self._ps_with_timeout(
-            "Clear-UsbipState -UsbipExe $UsbipExe "
-            f"-DetachMode '{self.cleanup_detach}'",
-            self.cleanup_timeout, "cleanup")
-        for line in r.std_out.decode().splitlines():
-            if line.startswith("[cleanup]"):
-                print(line, flush=True)
+            "Clear-UsbipState -UsbipExe $UsbipExe -DetachMode 'skip'",
+            self.cleanup_timeout, "cleanup filter/pnp")
+        self._print_cleanup_output(r)
         raw = self._json_output(r)
         if not raw.get("Clean") or raw.get("Remaining") != 0:
             raise RuntimeError(f"Windows cleanup did not reach a clean state: {raw}")

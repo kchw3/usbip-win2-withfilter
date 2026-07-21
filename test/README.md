@@ -180,9 +180,10 @@ detach; if that line is absent, the Windows VM is still running an older
 native USB/IP and PnP cleanup tools with explicit timeouts and async output
 capture, reports the timeout, and continues to the stale-node cleanup instead of
 letting pytest wait behind WinRM forever. The pytest harness also prints
-`[cleanup] starting Windows cleanup` before entering WinRM and bounds the whole
-cleanup call; tune `[windows] cleanup_timeout` in `test/config.ini` if your VM
-needs more than the default 60 seconds. Cleanup defaults to
+`[cleanup] starting Windows cleanup`, runs detach and filter/PnP cleanup as
+separate bounded WinRM phases, and names the phase if one times out; tune
+`[windows] cleanup_timeout` in `test/config.ini` if your VM needs more than the
+default 60 seconds. Cleanup defaults to
 `[windows] cleanup_detach=closeonly` because full UdeCx plug-out can wedge on a
 bad prior import; set it to `full` only when you specifically need a fresh
 UdeCx child path, or `skip` for diagnostics.

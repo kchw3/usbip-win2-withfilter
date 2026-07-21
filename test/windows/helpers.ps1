@@ -31,7 +31,25 @@ function Invoke-NativeWithTimeout {
     $psi.RedirectStandardError = $true
     $psi.CreateNoWindow = $true
 
-    $p = [System.Diagnostics.Process]::Start($psi)
+    $stdout = [System.Text.StringBuilder]::new()
+    $stderr = [System.Text.StringBuilder]::new()
+    $p = [System.Diagnostics.Process]::new()
+    $p.StartInfo = $psi
+    $outHandler = [System.Diagnostics.DataReceivedEventHandler]{
+        param($sender, $eventArgs)
+        if ($null -ne $eventArgs.Data) { $null = $stdout.AppendLine($eventArgs.Data) }
+    }
+    $errHandler = [System.Diagnostics.DataReceivedEventHandler]{
+        param($sender, $eventArgs)
+        if ($null -ne $eventArgs.Data) { $null = $stderr.AppendLine($eventArgs.Data) }
+    }
+    $p.add_OutputDataReceived($outHandler)
+    $p.add_ErrorDataReceived($errHandler)
+
+    $null = $p.Start()
+    $p.BeginOutputReadLine()
+    $p.BeginErrorReadLine()
+
     $timedOut = -not $p.WaitForExit($TimeoutSeconds * 1000)
     if ($timedOut) {
         try {
@@ -39,12 +57,19 @@ function Invoke-NativeWithTimeout {
         } catch {
             try { $p.Kill() } catch {}
         }
-        try { $null = $p.WaitForExit(2000) } catch {}
+    } else {
+        # Let async output callbacks drain after a normal process exit.
+        try { $p.WaitForExit() } catch {}
     }
 
-    $out = $p.StandardOutput.ReadToEnd()
-    $err = $p.StandardError.ReadToEnd()
-    $text = ($out + $err).TrimEnd()
+    if (-not $timedOut) {
+        try { $p.CancelOutputRead() } catch {}
+        try { $p.CancelErrorRead() } catch {}
+    }
+    $p.remove_OutputDataReceived($outHandler)
+    $p.remove_ErrorDataReceived($errHandler)
+
+    $text = ($stdout.ToString() + $stderr.ToString()).TrimEnd()
     $code = if ($timedOut) { -1 } else { $p.ExitCode }
 
     if ($timedOut) {
@@ -360,6 +385,7 @@ function Clear-UsbipState {
         [string] $UsbipExe = 'usbip.exe',
         [string] $TestVid  = '16C0'      # VID shared by all test gadgets (devices.py)
     )
+    Write-Output "[cleanup] helpers.ps1 native-timeout revision: async-v2"
     # Detach is best-effort (it can return non-zero when nothing is attached),
     # but resetting the policy must succeed. Use full detach, not closeonly:
     # closeonly only drops TCP/IP connections and can leave a stale UdeCx device

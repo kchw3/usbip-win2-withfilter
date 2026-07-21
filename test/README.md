@@ -231,10 +231,20 @@ WPP lines around `device-type filter disabled`, `ALLOWED and snapshotted`, and
   - BadUSB HID injects keystrokes that run code (a marker file is dropped),
   - mass storage exposes a payload the client can read back,
   - composite fires both channels,
-  - rogue NIC presents a new network adapter.
+  - rogue NIC presents a VID/PID-matched network adapter.
   This proves the simulations are genuine attacks. Combined with the matrix
   (same devices, filter ON -> blocked), it shows the filter is what stops them.
   These execute real payloads on the client: run only on a disposable, isolated VM.
+
+  Function-child readiness matters for payload efficacy. A parent `VID/PID` node
+  can appear before the function driver child is usable. The HID cases therefore
+  wait for a present/OK `Keyboard` child before writing reports, and the NIC case
+  waits for a present/OK `Net` child whose instance ID matches the test VID/PID.
+  Mass storage already waits on the real payload file becoming readable from a
+  removable volume, which is a stronger child/function readiness signal than PnP
+  presence alone. The matrix tests deliberately keep their allow oracle at
+  parent present+started, because they validate filter allow/deny rather than
+  payload usability; deny paths still watch for any matching PnP exposure.
 
 ## Known design limits these tests encode (not bugs to "fix" in the test)
 

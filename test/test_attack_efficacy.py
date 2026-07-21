@@ -147,13 +147,13 @@ def test_composite_both_channels_live(linux, win):
 
 
 def test_rogue_nic_appears(linux, win):
-    """Rogue USB NIC actually presents a new network adapter on the client."""
+    """Rogue USB NIC actually presents a VID/PID-matched network child."""
     dev = DEVICES["cdc_nic"]
     win.set_policy(disable=True)
-    baseline = win.net_adapter_names()
 
     linux.build_gadget(dev.gadget, vid=f"0x{VID}", pid=f"0x{dev.pid}")
     assert win.attach(linux.busid), "device should attach with filter disabled"
 
-    assert _wait(lambda: bool(win.net_adapter_names() - baseline)), (
-        "no new network adapter appeared -> rogue NIC simulation not live")
+    assert _wait(lambda: win.net_child_ready(VID, dev.pid)), (
+        "no VID/PID-matched network adapter appeared -> rogue NIC simulation "
+        f"not live; Net child status: {win.net_child_status(VID, dev.pid)}")

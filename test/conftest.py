@@ -458,6 +458,20 @@ class WindowsClient:
     def remove_public_marker(self, token: str) -> None:
         self.ps(f"Remove-PublicMarker -Token '{token}'")
 
+    def net_child_status(self, vid: str, pid: str) -> list[dict]:
+        """Network child-stack status for a VID/PID."""
+        r = self.ps(f"Get-NetChildStatus -Vid '{vid}' -ProductId '{pid}'")
+        out = r.std_out.decode()
+        return [json.loads(ln) for ln in out.splitlines() if ln.strip()]
+
+    def net_child_ready(self, vid: str, pid: str) -> bool:
+        for node in self.net_child_status(vid, pid):
+            if (node.get("Class") == "Net" and
+                    node.get("Status") == "OK" and
+                    str(node.get("Problem")) in ("0", "", "None")):
+                return True
+        return False
+
     def net_adapter_names(self) -> set[str]:
         r = self.ps("Get-PresentNetAdapterNames")
         return {ln.strip() for ln in r.std_out.decode().splitlines() if ln.strip()}

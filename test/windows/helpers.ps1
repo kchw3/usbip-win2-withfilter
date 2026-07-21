@@ -217,9 +217,35 @@ function Remove-PublicMarker {
     Remove-Item "C:\Users\Public\ub_$Token.txt" -ErrorAction SilentlyContinue
 }
 
+function Get-NetChildStatus {
+    # Diagnose a network child stack for a VID/PID. A global adapter-name diff can
+    # be satisfied by unrelated network churn, so the rogue-NIC efficacy test uses
+    # this VID/PID-correlated PnP child oracle instead.
+    param(
+        [Parameter(Mandatory)] [string] $Vid,
+        [Parameter(Mandatory)] [string] $ProductId
+    )
+    $match = "VID_${Vid}&PID_${ProductId}"
+    Get-PnpDevice -PresentOnly -Class 'Net' -ErrorAction SilentlyContinue |
+        Where-Object { $_.InstanceId -match $match } |
+        ForEach-Object {
+            $problem = (Get-PnpDeviceProperty -InstanceId $_.InstanceId `
+                -KeyName 'DEVPKEY_Device_ProblemCode' -ErrorAction SilentlyContinue).Data
+            $service = (Get-PnpDeviceProperty -InstanceId $_.InstanceId `
+                -KeyName 'DEVPKEY_Device_Service' -ErrorAction SilentlyContinue).Data
+            [pscustomobject]@{
+                InstanceId   = $_.InstanceId
+                Class        = "$($_.Class)"
+                Status       = "$($_.Status)"
+                Problem      = "$problem"
+                Service      = "$service"
+                FriendlyName = "$($_.FriendlyName)"
+            } | ConvertTo-Json -Compress
+        }
+}
+
 function Get-PresentNetAdapterNames {
     # Names of network adapters that are actually present (not 'Not Present').
-    # The efficacy NIC test baselines this, attaches, then diffs for a rogue NIC.
     (Get-NetAdapter -ErrorAction SilentlyContinue |
         Where-Object Status -ne 'Not Present' |
         Select-Object -ExpandProperty Name) -join "`n"

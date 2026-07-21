@@ -179,7 +179,10 @@ detach; if that line is absent, the Windows VM is still running an older
 the Windows-side `usbip.exe detach --all` call is stuck. `helpers.ps1` now runs
 native USB/IP and PnP cleanup tools with explicit timeouts and async output
 capture, reports the timeout, and continues to the stale-node cleanup instead of
-letting pytest wait behind WinRM forever.
+letting pytest wait behind WinRM forever. The pytest harness also prints
+`[cleanup] starting Windows cleanup` before entering WinRM and bounds the whole
+cleanup call; tune `[windows] cleanup_timeout` in `test/config.ini` if your VM
+needs more than the default 60 seconds.
 
 **`usbip.exe attach` succeeds but no `VID_16C0` node becomes present in the
 efficacy suite.** We diagnosed one concrete case where manual attach with

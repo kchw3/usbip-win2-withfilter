@@ -14,8 +14,10 @@ from __future__ import annotations
 import configparser
 import json
 import os
+import queue
 import shlex
 import textwrap
+import threading
 import time
 import uuid
 from dataclasses import dataclass
@@ -341,6 +343,7 @@ class WindowsClient:
         self.helpers = w["helpers"]
         self.usbip = w.get("usbip_exe", "usbip.exe")
         self.server = cp["server"]["address"]
+        self.cleanup_timeout = w.getfloat("cleanup_timeout", fallback=60.0)
         self.session = winrm.Session(
             w["host"],
             auth=(w["user"], w["password"]),
@@ -483,11 +486,36 @@ class WindowsClient:
         raw = self._json_output(r)
         return raw if isinstance(raw, list) else [raw]
 
+    def _ps_with_timeout(self, script: str, timeout: float, label: str):
+        results: queue.Queue = queue.Queue(maxsize=1)
+
+        def worker() -> None:
+            try:
+                results.put((True, self.ps(script)))
+            except BaseException as exc:  # preserve remote traceback/error text
+                results.put((False, exc))
+
+        thread = threading.Thread(target=worker, name=f"winrm-{label}", daemon=True)
+        thread.start()
+        try:
+            ok, value = results.get(timeout=timeout)
+        except queue.Empty as exc:
+            raise TimeoutError(
+                f"Windows {label} did not complete within {timeout:g}s. "
+                "If this is cleanup, verify the deployed helpers.ps1 prints "
+                "'[cleanup] helpers.ps1 native-timeout revision: async-v2'.") from exc
+        if ok:
+            return value
+        raise value
+
     def cleanup(self) -> None:
-        r = self.ps("Clear-UsbipState -UsbipExe $UsbipExe")
+        print(f"[cleanup] starting Windows cleanup (timeout={self.cleanup_timeout:g}s)",
+              flush=True)
+        r = self._ps_with_timeout(
+            "Clear-UsbipState -UsbipExe $UsbipExe", self.cleanup_timeout, "cleanup")
         for line in r.std_out.decode().splitlines():
             if line.startswith("[cleanup]"):
-                print(line)
+                print(line, flush=True)
         raw = self._json_output(r)
         if not raw.get("Clean") or raw.get("Remaining") != 0:
             raise RuntimeError(f"Windows cleanup did not reach a clean state: {raw}")

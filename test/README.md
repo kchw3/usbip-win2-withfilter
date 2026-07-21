@@ -166,8 +166,10 @@ presence oracle would then match that ghost and pass on a device that isn't
 really there. Two defences: `Clear-UsbipState` (run by the `win` fixture around
 every test) now *removes* lingering PnP nodes for the test VID, and
 `Test-PnpPresent` requires the node be present **and** started (`Status = OK`).
-If you still see a stale node, clear it by hand:
-`Get-PnpDevice | ?{ $_.InstanceId -match 'VID_16C0' } | Remove-PnpDevice -Confirm:$false`.
+If you still see a stale node, clear it by hand with `Remove-PnpDevice` when
+available, or with the portable `pnputil` fallback:
+`pnputil /remove-device "HID\VID_16C0&PID_03E8\..."`. Run pytest with `-s`
+to see live `[cleanup]` removal diagnostics.
 
 ## What each layer asserts
 

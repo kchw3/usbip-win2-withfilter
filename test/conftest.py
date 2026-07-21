@@ -463,6 +463,9 @@ class WindowsClient:
 
     def cleanup(self) -> None:
         r = self.ps("Clear-UsbipState -UsbipExe $UsbipExe")
+        for line in r.std_out.decode().splitlines():
+            if line.startswith("[cleanup]"):
+                print(line)
         raw = self._json_output(r)
         if not raw.get("Clean") or raw.get("Remaining") != 0:
             raise RuntimeError(f"Windows cleanup did not reach a clean state: {raw}")

@@ -287,12 +287,47 @@ function Clear-UsbipState {
     $null = Invoke-UsbipChecked -UsbipExe $UsbipExe -Arguments @('filter', '--disable')
 
     $match = "VID_$TestVid"
-    Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue |
-        Where-Object { $_.InstanceId -match $match } |
-        ForEach-Object {
-            try { Remove-PnpDevice -InstanceId $_.InstanceId -Confirm:$false -ErrorAction Stop }
-            catch { }   # verify below; do not silently accept a surviving node
+    $removePnpDevice = Get-Command Remove-PnpDevice -ErrorAction SilentlyContinue
+    $pnputil = Get-Command pnputil.exe -ErrorAction SilentlyContinue
+    $nodes = @(Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue |
+        Where-Object { $_.InstanceId -match $match })
+
+    foreach ($node in $nodes) {
+        $id = $node.InstanceId
+        Write-Output "[cleanup] stale PnP node found: $($node.Status) $($node.Class) $id"
+        $removed = $false
+
+        if ($null -ne $removePnpDevice) {
+            try {
+                Write-Output "[cleanup] removing via Remove-PnpDevice: $id"
+                Remove-PnpDevice -InstanceId $id -Confirm:$false -ErrorAction Stop
+                Write-Output "[cleanup] Remove-PnpDevice completed: $id"
+                $removed = $true
+            } catch {
+                Write-Output "[cleanup] Remove-PnpDevice failed for $id`: $($_.Exception.Message)"
+            }
+        } else {
+            Write-Output "[cleanup] Remove-PnpDevice not available; using pnputil.exe"
         }
+
+        if (-not $removed) {
+            if ($null -eq $pnputil) {
+                Write-Output "[cleanup] pnputil.exe not available; cannot remove $id"
+                continue
+            }
+            Write-Output "[cleanup] removing via pnputil.exe /remove-device: $id"
+            $out = & pnputil.exe /remove-device "$id" 2>&1 | Out-String
+            $code = $LASTEXITCODE
+            $out.Trim() -split "`r?`n" |
+                Where-Object { $_ } |
+                ForEach-Object { Write-Output "[cleanup] pnputil: $_" }
+            if ($code -eq 0) {
+                Write-Output "[cleanup] pnputil.exe completed: $id"
+            } else {
+                Write-Output "[cleanup] pnputil.exe failed for $id with exit $code"
+            }
+        }
+    }
 
     Start-Sleep -Milliseconds 300
     $remaining = @(Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue |

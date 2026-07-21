@@ -344,6 +344,7 @@ class WindowsClient:
         self.usbip = w.get("usbip_exe", "usbip.exe")
         self.server = cp["server"]["address"]
         self.cleanup_timeout = w.getfloat("cleanup_timeout", fallback=60.0)
+        self.cleanup_step_timeout = w.getfloat("cleanup_step_timeout", fallback=20.0)
         self.cleanup_detach = w.get("cleanup_detach", "skip").strip().lower()
         if self.cleanup_detach not in {"closeonly", "full", "skip"}:
             raise ValueError(
@@ -518,17 +519,45 @@ class WindowsClient:
             if line.startswith("[cleanup]"):
                 print(line, flush=True)
 
+    @staticmethod
+    def _ps_literal(value: str) -> str:
+        return "'" + value.replace("'", "''") + "'"
+
+    def _cleanup_step(self, label: str, script: str, timeout: float | None = None):
+        limit = self.cleanup_step_timeout if timeout is None else timeout
+        print(f"[cleanup] phase: {label} (timeout={limit:g}s)", flush=True)
+        return self._ps_with_timeout(script, limit, f"cleanup {label}")
+
+    @staticmethod
+    def _normalize_json_list(value) -> list[dict]:
+        if value is None:
+            return []
+        if isinstance(value, list):
+            return value
+        return [value]
+
+    def _cleanup_list_nodes(self, label: str) -> list[dict]:
+        r = self._cleanup_step(label, """
+$nodes = @(Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue |
+    Where-Object { $_.InstanceId -match 'VID_16C0' } |
+    Select-Object InstanceId, Status, Class)
+[pscustomobject]@{ Nodes = @($nodes) } | ConvertTo-Json -Compress
+""")
+        raw = self._json_output(r)
+        return self._normalize_json_list(raw.get("Nodes"))
+
     def cleanup(self) -> None:
         print(
             f"[cleanup] starting Windows cleanup "
-            f"(timeout={self.cleanup_timeout:g}s, detach={self.cleanup_detach})",
+            f"(timeout={self.cleanup_timeout:g}s, "
+            f"step_timeout={self.cleanup_step_timeout:g}s, "
+            f"detach={self.cleanup_detach})",
             flush=True)
 
         if self.cleanup_detach == "skip":
             print("[cleanup] skipping USB/IP detach by request", flush=True)
         else:
             detach_arg = "--all" if self.cleanup_detach == "full" else "--all=closeonly"
-            print(f"[cleanup] phase: usbip.exe detach {detach_arg}", flush=True)
             detach_script = (
                 f"$r = Invoke-NativeWithTimeout -FilePath $UsbipExe "
                 f"-Arguments @('detach', '{detach_arg}') -TimeoutSeconds 15\n"
@@ -537,17 +566,72 @@ class WindowsClient:
                 "} elseif ($r.ExitCode -ne 0) { "
                 "Write-Output ('[cleanup] usbip.exe detach exited ' + $r.ExitCode + ': ' + $r.Output) "
                 "} else { Write-Output '[cleanup] usbip.exe detach completed' }")
-            r = self._ps_with_timeout(detach_script, 25.0, "cleanup detach")
+            r = self._cleanup_step(f"usbip.exe detach {detach_arg}", detach_script, 25.0)
             self._print_cleanup_output(r)
 
-        print("[cleanup] phase: filter reset and stale PnP reap", flush=True)
-        r = self._ps_with_timeout(
-            "Clear-UsbipState -UsbipExe $UsbipExe -DetachMode 'skip'",
-            self.cleanup_timeout, "cleanup filter/pnp")
+        r = self._cleanup_step("filter --disable", """
+Invoke-UsbipChecked -UsbipExe $UsbipExe -Arguments @('filter', '--disable') `
+    -TimeoutSeconds 15 | Out-Null
+Write-Output '[cleanup] filter --disable completed'
+[pscustomobject]@{ Ok = $true } | ConvertTo-Json -Compress
+""")
         self._print_cleanup_output(r)
-        raw = self._json_output(r)
-        if not raw.get("Clean") or raw.get("Remaining") != 0:
-            raise RuntimeError(f"Windows cleanup did not reach a clean state: {raw}")
+        self._json_output(r)
+
+        nodes = self._cleanup_list_nodes("enumerate stale VID_16C0 PnP nodes")
+        if not nodes:
+            print("[cleanup] no stale VID_16C0 PnP nodes found", flush=True)
+        for node in nodes:
+            instance_id = str(node.get("InstanceId", ""))
+            print(
+                f"[cleanup] stale PnP node found: "
+                f"{node.get('Status')} {node.get('Class')} {instance_id}",
+                flush=True)
+            quoted_id = self._ps_literal(instance_id)
+            remove_script = f"""
+$id = {quoted_id}
+$removePnpDevice = Get-Command Remove-PnpDevice -ErrorAction SilentlyContinue
+$pnputil = Get-Command pnputil.exe -ErrorAction SilentlyContinue
+if ($null -ne $removePnpDevice) {{
+    try {{
+        Remove-PnpDevice -InstanceId $id -Confirm:$false -ErrorAction Stop
+        [pscustomobject]@{{ Removed=$true; Method='Remove-PnpDevice'; InstanceId=$id }} | ConvertTo-Json -Compress
+        return
+    }} catch {{
+        Write-Output ("[cleanup] Remove-PnpDevice failed for $id: " + $_.Exception.Message)
+    }}
+}} else {{
+    Write-Output '[cleanup] Remove-PnpDevice not available; using pnputil.exe'
+}}
+if ($null -eq $pnputil) {{
+    [pscustomobject]@{{ Removed=$false; Method='none'; InstanceId=$id; Error='pnputil.exe not available' }} | ConvertTo-Json -Compress
+    return
+}}
+$r = Invoke-NativeWithTimeout -FilePath $pnputil.Source `
+    -Arguments @('/remove-device', $id) -TimeoutSeconds 20
+if ($r.Output) {{
+    $r.Output.Trim() -split "`r?`n" | Where-Object {{ $_ }} |
+        ForEach-Object {{ Write-Output ("[cleanup] pnputil: " + $_) }}
+}}
+[pscustomobject]@{{
+    Removed = ($r.ExitCode -eq 0)
+    Method = 'pnputil.exe'
+    InstanceId = $id
+    ExitCode = $r.ExitCode
+    TimedOut = $r.TimedOut
+}} | ConvertTo-Json -Compress
+"""
+            r = self._cleanup_step(f"remove stale node {instance_id}", remove_script)
+            self._print_cleanup_output(r)
+            result = self._json_output(r)
+            if not result.get("Removed"):
+                raise RuntimeError(f"Windows cleanup could not remove stale node: {result}")
+
+        remaining = self._cleanup_list_nodes("verify no stale VID_16C0 PnP nodes remain")
+        if remaining:
+            raise RuntimeError(
+                f"Windows cleanup left test PnP nodes present: {remaining}")
+        print("[cleanup] Windows cleanup completed", flush=True)
 
 
 @pytest.fixture()

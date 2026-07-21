@@ -344,6 +344,10 @@ class WindowsClient:
         self.usbip = w.get("usbip_exe", "usbip.exe")
         self.server = cp["server"]["address"]
         self.cleanup_timeout = w.getfloat("cleanup_timeout", fallback=60.0)
+        self.cleanup_detach = w.get("cleanup_detach", "closeonly").strip().lower()
+        if self.cleanup_detach not in {"closeonly", "full", "skip"}:
+            raise ValueError(
+                "[windows] cleanup_detach must be closeonly, full, or skip")
         self.session = winrm.Session(
             w["host"],
             auth=(w["user"], w["password"]),
@@ -503,16 +507,20 @@ class WindowsClient:
             raise TimeoutError(
                 f"Windows {label} did not complete within {timeout:g}s. "
                 "If this is cleanup, verify the deployed helpers.ps1 prints "
-                "'[cleanup] helpers.ps1 native-timeout revision: async-v2'.") from exc
+                "'[cleanup] helpers.ps1 native-timeout revision: async-v3'.") from exc
         if ok:
             return value
         raise value
 
     def cleanup(self) -> None:
-        print(f"[cleanup] starting Windows cleanup (timeout={self.cleanup_timeout:g}s)",
-              flush=True)
+        print(
+            f"[cleanup] starting Windows cleanup "
+            f"(timeout={self.cleanup_timeout:g}s, detach={self.cleanup_detach})",
+            flush=True)
         r = self._ps_with_timeout(
-            "Clear-UsbipState -UsbipExe $UsbipExe", self.cleanup_timeout, "cleanup")
+            "Clear-UsbipState -UsbipExe $UsbipExe "
+            f"-DetachMode '{self.cleanup_detach}'",
+            self.cleanup_timeout, "cleanup")
         for line in r.std_out.decode().splitlines():
             if line.startswith("[cleanup]"):
                 print(line, flush=True)

@@ -383,24 +383,30 @@ function Clear-UsbipState {
     # from a clean PnP slate. Only nodes matching the test VID are touched.
     param(
         [string] $UsbipExe = 'usbip.exe',
-        [string] $TestVid  = '16C0'      # VID shared by all test gadgets (devices.py)
+        [string] $TestVid  = '16C0',      # VID shared by all test gadgets (devices.py)
+        [ValidateSet('closeonly', 'full', 'skip')]
+        [string] $DetachMode = 'closeonly'
     )
-    Write-Output "[cleanup] helpers.ps1 native-timeout revision: async-v2"
+    Write-Output "[cleanup] helpers.ps1 native-timeout revision: async-v3"
     # Detach is best-effort (it can return non-zero when nothing is attached),
-    # but resetting the policy must succeed. Use full detach, not closeonly:
-    # closeonly only drops TCP/IP connections and can leave a stale UdeCx device
-    # object behind after pnputil removes the visible PnP child nodes. Full detach
-    # calls UdecxUsbDevicePlugOutAndDelete, which gives the next attach a fresh
-    # root-hub child path.
-    Write-Output "[cleanup] detaching all USB/IP ports"
-    $detach = Invoke-NativeWithTimeout -FilePath $UsbipExe `
-        -Arguments @('detach', '--all') -TimeoutSeconds 15
-    if ($detach.TimedOut) {
-        Write-Output "[cleanup] usbip.exe detach --all timed out after 15s; continuing with PnP cleanup"
-    } elseif ($detach.ExitCode -ne 0) {
-        Write-Output "[cleanup] usbip.exe detach --all exited $($detach.ExitCode): $($detach.Output)"
+    # but resetting the policy must succeed. Default to closeonly because some
+    # wedged UdeCx/plugin-out paths can make full detach block before tests even
+    # start; stale VID nodes are still reaped below. Set DetachMode=full when you
+    # specifically need UdecxUsbDevicePlugOutAndDelete before the next attach.
+    if ($DetachMode -eq 'skip') {
+        Write-Output "[cleanup] skipping USB/IP detach by request"
+    } else {
+        $detachArg = if ($DetachMode -eq 'full') { '--all' } else { '--all=closeonly' }
+        Write-Output "[cleanup] detaching all USB/IP ports ($DetachMode)"
+        $detach = Invoke-NativeWithTimeout -FilePath $UsbipExe `
+            -Arguments @('detach', $detachArg) -TimeoutSeconds 15
+        if ($detach.TimedOut) {
+            Write-Output "[cleanup] usbip.exe detach $detachArg timed out after 15s; continuing with PnP cleanup"
+        } elseif ($detach.ExitCode -ne 0) {
+            Write-Output "[cleanup] usbip.exe detach $detachArg exited $($detach.ExitCode): $($detach.Output)"
+        }
+        Start-Sleep -Milliseconds 1000
     }
-    Start-Sleep -Milliseconds 1000
     $null = Invoke-UsbipChecked -UsbipExe $UsbipExe -Arguments @('filter', '--disable')
 
     $match = "VID_$TestVid"

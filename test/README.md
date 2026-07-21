@@ -173,16 +173,19 @@ next attach gets a fresh root-hub child path. If you still see a stale node,
 clear it by hand with `Remove-PnpDevice` when available, or with the portable
 `pnputil` fallback: `pnputil /remove-device "HID\VID_16C0&PID_03E8\..."`.
 Run pytest with `-s` to see live `[cleanup]` removal diagnostics. Current
-helpers print `[cleanup] helpers.ps1 native-timeout revision: async-v2` before
+helpers print `[cleanup] helpers.ps1 native-timeout revision: async-v3` before
 detach; if that line is absent, the Windows VM is still running an older
-`helpers.ps1` copy. If the last line is `[cleanup] detaching all USB/IP ports`,
-the Windows-side `usbip.exe detach --all` call is stuck. `helpers.ps1` now runs
+`helpers.ps1` copy. If the last line is `[cleanup] detaching all USB/IP ports
+(<mode>)`, the Windows-side `usbip.exe detach` call is stuck. `helpers.ps1` now runs
 native USB/IP and PnP cleanup tools with explicit timeouts and async output
 capture, reports the timeout, and continues to the stale-node cleanup instead of
 letting pytest wait behind WinRM forever. The pytest harness also prints
 `[cleanup] starting Windows cleanup` before entering WinRM and bounds the whole
 cleanup call; tune `[windows] cleanup_timeout` in `test/config.ini` if your VM
-needs more than the default 60 seconds.
+needs more than the default 60 seconds. Cleanup defaults to
+`[windows] cleanup_detach=closeonly` because full UdeCx plug-out can wedge on a
+bad prior import; set it to `full` only when you specifically need a fresh
+UdeCx child path, or `skip` for diagnostics.
 
 **`usbip.exe attach` succeeds but no `VID_16C0` node becomes present in the
 efficacy suite.** We diagnosed one concrete case where manual attach with

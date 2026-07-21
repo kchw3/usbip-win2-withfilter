@@ -433,10 +433,18 @@ class WindowsClient:
         return {ln.strip() for ln in r.std_out.decode().splitlines() if ln.strip()}
 
     def hid_child_status(self, vid: str, pid: str) -> list[dict]:
-        """HID child-stack status for a VID/PID (one dict per HID-class node)."""
+        """HID/keyboard child-stack status for a VID/PID."""
         r = self.ps(f"Get-HidChildStatus -Vid '{vid}' -ProductId '{pid}'")
         out = r.std_out.decode()
         return [json.loads(ln) for ln in out.splitlines() if ln.strip()]
+
+    def keyboard_child_ready(self, vid: str, pid: str) -> bool:
+        for node in self.hid_child_status(vid, pid):
+            if (node.get("Class") == "Keyboard" and
+                    node.get("Status") == "OK" and
+                    str(node.get("Problem")) in ("0", "", "None")):
+                return True
+        return False
 
     def removable_marker(self, filename: str) -> str | None:
         r = self.ps(f"Get-RemovableMarker -FileName '{filename}'")

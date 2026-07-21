@@ -260,12 +260,15 @@ WPP lines around `device-type filter disabled`, `ALLOWED and snapshotted`, and
   gadget or this harness.
 
   This is now **diagnosed, not blanket-suppressed.** Both tests run every
-  precondition (attach, enumeration, and for the composite test the storage
-  channel) as hard assertions, then probe the endpoint with a non-blocking write
-  (`hid_type.py --probe`) and `xfail` **only** when the probe confirms the
-  `endpoint_disabled` (all-`ESHUTDOWN`) condition. Any other probe result
-  (`live`, `no_host_polling`, `unknown`) means the endpoint should work, so
-  injection is then *required* to succeed — a fixed client shows up as a normal
+  precondition (attach, enumeration, keyboard-child startup, and for the composite
+  test the storage channel) as hard assertions, then probe the endpoint with a
+  non-blocking write (`hid_type.py --probe`) and `xfail` **only** when the probe
+  confirms the `endpoint_disabled` (all-`ESHUTDOWN`) condition. Any other probe
+  result (`live`, `no_host_polling`, `unknown`) means the endpoint should work,
+  so injection is then *required* to succeed — a fixed client shows up as a normal
   pass, and a different regression is a real failure rather than a hidden xfail.
-  HID *enumeration* (allow/deny) remains fully covered by `test_matrix.py`. This
-  is still a candidate driver-side finding to investigate in `usbip2_ude`.
+  The keyboard-child gate matters because the USB HID parent can be present with
+  `HidUsb` before the `Keyboard`/`kbdhid` child is started; writes to `/dev/hidgN`
+  can queue in that window without producing keystrokes. HID *enumeration*
+  (allow/deny) remains fully covered by `test_matrix.py`. This is still a
+  candidate driver-side finding to investigate in `usbip2_ude`.

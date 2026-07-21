@@ -53,6 +53,10 @@ def _wait(predicate, timeout: float = 20.0, interval: float = 1.0) -> bool:
 
 
 def _require_injection_or_known_limitation(linux, win, token: str, hid_pid: str) -> None:
+    assert _wait(lambda: win.keyboard_child_ready(VID, hid_pid), timeout=15.0), (
+        "HID parent enumerated, but Windows never started the Keyboard child; "
+        f"HID child status: {win.hid_child_status(VID, hid_pid)}")
+
     probe = linux.probe_hid_endpoint()
     classification = probe.get("classification")
     if classification == "endpoint_disabled":

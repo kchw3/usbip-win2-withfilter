@@ -46,12 +46,17 @@ inline UNICODE_STRING value_name()
 }
 
 /*
- * @return true if (cls, sub, proto) matches at least one whitelist entry.
+ * @return true if the filter is disabled, or if (cls, sub, proto) matches at
+ * least one whitelist entry.
  */
 _IRQL_requires_same_
 _IRQL_requires_max_(DISPATCH_LEVEL)
 bool is_allowed(_In_ const policy &p, _In_ UINT8 cls, _In_ UINT8 sub, _In_ UINT8 proto)
 {
+        if (p.mode == vhci::filter_mode::disabled) {
+                return true;
+        }
+
         for (ULONG i = 0; i < p.count; ++i) {
                 auto &e = p.entries[i];
 
@@ -585,17 +590,18 @@ PAGED NTSTATUS usbip::device_filter::check_device(_Inout_ device_ctx_ext &ext, _
         load(p);
 
         if (p.mode == vhci::filter_mode::disabled) {
-                TraceDbg("%!USTR!:%!USTR!/%!USTR! VID_%04X&PID_%04X: device-type filter disabled, allow",
+                Trace(TRACE_LEVEL_INFORMATION,
+                        "device-type filter disabled: allowing %!USTR!:%!USTR!/%!USTR! "
+                        "VID_%04X&PID_%04X and snapshotting descriptors for UdeCx",
                         ext.node_name(), ext.service_name(), ext.busid(), udev.idVendor, udev.idProduct);
-                return STATUS_SUCCESS;
+        } else {
+                Trace(TRACE_LEVEL_INFORMATION,
+                        "device-type filter: evaluating %!USTR!:%!USTR!/%!USTR! VID_%04X&PID_%04X "
+                        "(device class %02X/%02X/%02X %s, %u config(s)) against whitelist of %lu entrie(s)",
+                        ext.node_name(), ext.service_name(), ext.busid(), udev.idVendor, udev.idProduct,
+                        udev.bDeviceClass, udev.bDeviceSubClass, udev.bDeviceProtocol, usb_class_name(udev.bDeviceClass),
+                        udev.bNumConfigurations, p.count);
         }
-
-        Trace(TRACE_LEVEL_INFORMATION,
-                "device-type filter: evaluating %!USTR!:%!USTR!/%!USTR! VID_%04X&PID_%04X "
-                "(device class %02X/%02X/%02X %s, %u config(s)) against whitelist of %lu entrie(s)",
-                ext.node_name(), ext.service_name(), ext.busid(), udev.idVendor, udev.idProduct,
-                udev.bDeviceClass, udev.bDeviceSubClass, udev.bDeviceProtocol, usb_class_name(udev.bDeviceClass),
-                udev.bNumConfigurations, p.count);
 
         // Device-descriptor class token (skip 0x00 = defined per interface, 0xEF = composite glue).
         if (udev.bDeviceClass && udev.bDeviceClass != 0xEF) {
@@ -639,11 +645,19 @@ PAGED NTSTATUS usbip::device_filter::check_device(_Inout_ device_ctx_ext &ext, _
         // snapshot is immutable and lives with device_ctx_ext until detach.
         snapshot.ready = true;
 
-        Trace(TRACE_LEVEL_INFORMATION,
-                "device-type filter: %!USTR!:%!USTR!/%!USTR! VID_%04X&PID_%04X "
-                "ALLOWED and snapshotted (all %u config(s) passed the whitelist)",
-                ext.node_name(), ext.service_name(), ext.busid(), udev.idVendor,
-                udev.idProduct, snapshot.configuration_count);
+        if (p.mode == vhci::filter_mode::disabled) {
+                Trace(TRACE_LEVEL_INFORMATION,
+                        "device-type filter disabled: %!USTR!:%!USTR!/%!USTR! VID_%04X&PID_%04X "
+                        "ALLOWED and snapshotted (%u config(s))",
+                        ext.node_name(), ext.service_name(), ext.busid(), udev.idVendor,
+                        udev.idProduct, snapshot.configuration_count);
+        } else {
+                Trace(TRACE_LEVEL_INFORMATION,
+                        "device-type filter: %!USTR!:%!USTR!/%!USTR! VID_%04X&PID_%04X "
+                        "ALLOWED and snapshotted (all %u config(s) passed the whitelist)",
+                        ext.node_name(), ext.service_name(), ext.busid(), udev.idVendor,
+                        udev.idProduct, snapshot.configuration_count);
+        }
 
         return STATUS_SUCCESS;
 }

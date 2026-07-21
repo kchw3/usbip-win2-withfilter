@@ -171,6 +171,23 @@ available, or with the portable `pnputil` fallback:
 `pnputil /remove-device "HID\VID_16C0&PID_03E8\..."`. Run pytest with `-s`
 to see live `[cleanup]` removal diagnostics.
 
+**`usbip.exe attach` succeeds but no `VID_16C0` node becomes present in the
+efficacy suite.** We diagnosed one concrete case where manual attach with
+`usbip.exe filter --allow hid` enumerated `USB\VID_16C0&PID_03E8` and its HID
+keyboard child, but `test_attack_efficacy.py` still failed because the suite
+intentionally runs with the filter **disabled**. The WPP trace showed
+`OP_REP_IMPORT`, descriptor fetches, whitelist snapshotting, `UdecxUsbDevicePlugIn`,
+and `usbip.exe port` all succeeding in whitelist mode. In disabled mode, the
+old driver path returned from `device_filter::check_device()` before descriptor
+snapshotting, preserving the historical dynamic-descriptor path; in this lab
+that left UdeCx without the immutable descriptors needed for reliable child PnP
+enumeration. The driver fix is in `drivers/ude/device_filter.cpp`: disabled
+mode now means "allow every class tuple" but still fetches, patches, and
+registers the descriptor snapshot for UdeCx before plug-in. If this regresses,
+compare `usbip.exe port`, `Get-PnpDevice` for `VID_16C0`, and the `usbip2_ude`
+WPP lines around `device-type filter disabled`, `ALLOWED and snapshotted`, and
+`dev ... plugged in`.
+
 ## What each layer asserts
 
 - **test_matrix.py** — for every (policy, device) it checks three independent,

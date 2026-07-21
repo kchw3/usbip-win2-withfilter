@@ -172,7 +172,11 @@ drops TCP/IP connections; tests need `UdecxUsbDevicePlugOutAndDelete` so the
 next attach gets a fresh root-hub child path. If you still see a stale node,
 clear it by hand with `Remove-PnpDevice` when available, or with the portable
 `pnputil` fallback: `pnputil /remove-device "HID\VID_16C0&PID_03E8\..."`.
-Run pytest with `-s` to see live `[cleanup]` removal diagnostics.
+Run pytest with `-s` to see live `[cleanup]` removal diagnostics. If the
+last line is `[cleanup] detaching all USB/IP ports`, the Windows-side
+`usbip.exe detach --all` call is stuck. `helpers.ps1` now runs native USB/IP
+and PnP cleanup tools with explicit timeouts, reports the timeout, and continues
+to the stale-node cleanup instead of letting pytest wait behind WinRM forever.
 
 **`usbip.exe attach` succeeds but no `VID_16C0` node becomes present in the
 efficacy suite.** We diagnosed one concrete case where manual attach with

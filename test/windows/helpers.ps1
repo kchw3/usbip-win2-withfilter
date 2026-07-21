@@ -8,20 +8,69 @@
 
 $ErrorActionPreference = 'Stop'
 
+
+function Join-NativeArguments {
+    param([string[]] $Arguments)
+    (($Arguments | ForEach-Object {
+        '"' + ($_ -replace '"', '\"') + '"'
+    }) -join ' ')
+}
+
+function Invoke-NativeWithTimeout {
+    param(
+        [Parameter(Mandatory)] [string]   $FilePath,
+        [Parameter(Mandatory)] [string[]] $Arguments,
+        [int] $TimeoutSeconds = 30,
+        [switch] $ThrowOnNonZero
+    )
+    $psi = [System.Diagnostics.ProcessStartInfo]::new()
+    $psi.FileName = $FilePath
+    $psi.Arguments = Join-NativeArguments -Arguments $Arguments
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.CreateNoWindow = $true
+
+    $p = [System.Diagnostics.Process]::Start($psi)
+    $timedOut = -not $p.WaitForExit($TimeoutSeconds * 1000)
+    if ($timedOut) {
+        try {
+            $p.Kill($true)
+        } catch {
+            try { $p.Kill() } catch {}
+        }
+        try { $null = $p.WaitForExit(2000) } catch {}
+    }
+
+    $out = $p.StandardOutput.ReadToEnd()
+    $err = $p.StandardError.ReadToEnd()
+    $text = ($out + $err).TrimEnd()
+    $code = if ($timedOut) { -1 } else { $p.ExitCode }
+
+    if ($timedOut) {
+        $text = "timed out after ${TimeoutSeconds}s: $FilePath $($Arguments -join ' ')`n$text"
+    }
+    if ($ThrowOnNonZero -and $code -ne 0) {
+        throw "$FilePath $($Arguments -join ' ') failed with exit $code`n$text"
+    }
+    [pscustomobject]@{
+        ExitCode = $code
+        TimedOut = $timedOut
+        Output = $text
+    }
+}
+
 function Invoke-UsbipChecked {
     # PowerShell does not turn a non-zero native executable exit code into a
     # terminating error. Capture it explicitly so a failed policy mutation or
     # query cannot silently continue and make the test exercise a stale policy.
     param(
         [Parameter(Mandatory)] [string] $UsbipExe,
-        [Parameter(Mandatory)] [string[]] $Arguments
+        [Parameter(Mandatory)] [string[]] $Arguments,
+        [int] $TimeoutSeconds = 30
     )
-    $out = & $UsbipExe @Arguments 2>&1 | Out-String
-    $code = $LASTEXITCODE
-    if ($code -ne 0) {
-        throw "usbip.exe $($Arguments -join ' ') failed with exit $code`n$out"
-    }
-    $out
+    (Invoke-NativeWithTimeout -FilePath $UsbipExe -Arguments $Arguments `
+        -TimeoutSeconds $TimeoutSeconds -ThrowOnNonZero).Output
 }
 
 function Get-FilterPolicyState {
@@ -70,8 +119,9 @@ function Invoke-Attach {
         [Parameter(Mandatory)] [string] $BusId,
         [string] $UsbipExe = 'usbip.exe'
     )
-    $out = & $UsbipExe attach -r $Server -b $BusId 2>&1 | Out-String
-    [pscustomobject]@{ Ok = ($LASTEXITCODE -eq 0); ExitCode = $LASTEXITCODE; Output = $out }
+    $r = Invoke-NativeWithTimeout -FilePath $UsbipExe `
+        -Arguments @('attach', '-r', $Server, '-b', $BusId) -TimeoutSeconds 30
+    [pscustomobject]@{ Ok = ($r.ExitCode -eq 0); ExitCode = $r.ExitCode; Output = $r.Output }
 }
 
 function Test-PnpPresent {
@@ -317,7 +367,13 @@ function Clear-UsbipState {
     # calls UdecxUsbDevicePlugOutAndDelete, which gives the next attach a fresh
     # root-hub child path.
     Write-Output "[cleanup] detaching all USB/IP ports"
-    & $UsbipExe detach --all 2>&1 | Out-Null
+    $detach = Invoke-NativeWithTimeout -FilePath $UsbipExe `
+        -Arguments @('detach', '--all') -TimeoutSeconds 15
+    if ($detach.TimedOut) {
+        Write-Output "[cleanup] usbip.exe detach --all timed out after 15s; continuing with PnP cleanup"
+    } elseif ($detach.ExitCode -ne 0) {
+        Write-Output "[cleanup] usbip.exe detach --all exited $($detach.ExitCode): $($detach.Output)"
+    }
     Start-Sleep -Milliseconds 1000
     $null = Invoke-UsbipChecked -UsbipExe $UsbipExe -Arguments @('filter', '--disable')
 
@@ -351,15 +407,17 @@ function Clear-UsbipState {
                 continue
             }
             Write-Output "[cleanup] removing via pnputil.exe /remove-device: $id"
-            $out = & pnputil.exe /remove-device "$id" 2>&1 | Out-String
-            $code = $LASTEXITCODE
-            $out.Trim() -split "`r?`n" |
+            $remove = Invoke-NativeWithTimeout -FilePath $pnputil.Source `
+                -Arguments @('/remove-device', $id) -TimeoutSeconds 20
+            $remove.Output.Trim() -split "`r?`n" |
                 Where-Object { $_ } |
                 ForEach-Object { Write-Output "[cleanup] pnputil: $_" }
-            if ($code -eq 0) {
+            if ($remove.ExitCode -eq 0) {
                 Write-Output "[cleanup] pnputil.exe completed: $id"
+            } elseif ($remove.TimedOut) {
+                Write-Output "[cleanup] pnputil.exe timed out for $id"
             } else {
-                Write-Output "[cleanup] pnputil.exe failed for $id with exit $code"
+                Write-Output "[cleanup] pnputil.exe failed for $id with exit $($remove.ExitCode)"
             }
         }
     }

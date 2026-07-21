@@ -166,10 +166,13 @@ presence oracle would then match that ghost and pass on a device that isn't
 really there. Two defences: `Clear-UsbipState` (run by the `win` fixture around
 every test) now *removes* lingering PnP nodes for the test VID, and
 `Test-PnpPresent` requires the node be present **and** started (`Status = OK`).
-If you still see a stale node, clear it by hand with `Remove-PnpDevice` when
-available, or with the portable `pnputil` fallback:
-`pnputil /remove-device "HID\VID_16C0&PID_03E8\..."`. Run pytest with `-s`
-to see live `[cleanup]` removal diagnostics.
+`Clear-UsbipState` uses full `usbip.exe detach --all` rather than
+`--all=closeonly`, because `closeonly` is intended for reboot/shutdown and only
+drops TCP/IP connections; tests need `UdecxUsbDevicePlugOutAndDelete` so the
+next attach gets a fresh root-hub child path. If you still see a stale node,
+clear it by hand with `Remove-PnpDevice` when available, or with the portable
+`pnputil` fallback: `pnputil /remove-device "HID\VID_16C0&PID_03E8\..."`.
+Run pytest with `-s` to see live `[cleanup]` removal diagnostics.
 
 **`usbip.exe attach` succeeds but no `VID_16C0` node becomes present in the
 efficacy suite.** We diagnosed one concrete case where manual attach with

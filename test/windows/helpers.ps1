@@ -282,8 +282,14 @@ function Clear-UsbipState {
         [string] $TestVid  = '16C0'      # VID shared by all test gadgets (devices.py)
     )
     # Detach is best-effort (it can return non-zero when nothing is attached),
-    # but resetting the policy must succeed.
-    & $UsbipExe detach --all=closeonly 2>&1 | Out-Null
+    # but resetting the policy must succeed. Use full detach, not closeonly:
+    # closeonly only drops TCP/IP connections and can leave a stale UdeCx device
+    # object behind after pnputil removes the visible PnP child nodes. Full detach
+    # calls UdecxUsbDevicePlugOutAndDelete, which gives the next attach a fresh
+    # root-hub child path.
+    Write-Output "[cleanup] detaching all USB/IP ports"
+    & $UsbipExe detach --all 2>&1 | Out-Null
+    Start-Sleep -Milliseconds 1000
     $null = Invoke-UsbipChecked -UsbipExe $UsbipExe -Arguments @('filter', '--disable')
 
     $match = "VID_$TestVid"

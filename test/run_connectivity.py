@@ -66,10 +66,12 @@ def _linux_uses_vudc(cp: configparser.ConfigParser) -> bool:
 
 def _diagnose_script(cp: configparser.ConfigParser) -> str:
     udc = cp["linux"].get("udc_name", "usbip-vudc.0")
+    port = cp.getint("server", "port", fallback=3240)
     need_device_mode = "1" if _linux_uses_vudc(cp) else "0"
     return textwrap.dedent(f"""
         set -u
         udc={shlex.quote(udc)}
+        port={port}
         need_device_mode={need_device_mode}
         issue() {{ printf 'ISSUE|%s\n' "$*"; }}
         ok() {{ printf 'OK|%s\n' "$*"; }}
@@ -101,6 +103,9 @@ def _diagnose_script(cp: configparser.ConfigParser) -> str:
         device_mode() {{
           pgrep -af usbipd | grep -qE -- '(^|[[:space:]])(-e|--device)([[:space:]]|$)'
         }}
+        listening() {{
+          (ss -ltnH 2>/dev/null || netstat -ltn 2>/dev/null) | grep -q ":$port "
+        }}
         if [ "$need_device_mode" = 1 ]; then
           if device_mode; then
             ok "usbipd: device-mode daemon found"
@@ -108,16 +113,28 @@ def _diagnose_script(cp: configparser.ConfigParser) -> str:
             issue "usbipd: no device-mode daemon found"
           fi
         else
-          ok "usbipd: device-mode check not required for udc=$udc"
+          if ! pgrep -x usbipd >/dev/null; then
+            issue "usbipd: no host-mode daemon found"
+          elif device_mode; then
+            issue "usbipd: running in device mode, but host mode is required for udc=$udc"
+          else
+            ok "usbipd: host-mode daemon found"
+          fi
+        fi
+        if listening; then
+          ok "usbipd: listening on TCP $port"
+        else
+          issue "usbipd: no listener on TCP $port"
         fi
     """)
 
-
 def _fix_script(cp: configparser.ConfigParser) -> str:
     need_device_mode = "1" if _linux_uses_vudc(cp) else "0"
+    port = cp.getint("server", "port", fallback=3240)
     return textwrap.dedent(f"""
         set -u
         need_device_mode={need_device_mode}
+        port={port}
         failed=0
 
         log() {{ printf '[fix] %s\n' "$*"; }}
@@ -129,6 +146,8 @@ def _fix_script(cp: configparser.ConfigParser) -> str:
           fi
         }}
         module_loaded() {{ lsmod | awk '{{print $1}}' | grep -qx "$1"; }}
+        device_mode() {{ pgrep -af usbipd | grep -qE -- '(^|[[:space:]])(-e|--device)([[:space:]]|$)'; }}
+        listening() {{ (ss -ltnH 2>/dev/null || netstat -ltn 2>/dev/null) | grep -q ":$port "; }}
 
         ensure_configfs() {{
           if mountpoint -q /sys/kernel/config 2>/dev/null; then
@@ -194,13 +213,12 @@ def _fix_script(cp: configparser.ConfigParser) -> str:
         }}
 
         ensure_device_mode_usbipd() {{
-          device_mode() {{ pgrep -af usbipd | grep -qE -- '(^|[[:space:]])(-e|--device)([[:space:]]|$)'; }}
-          if device_mode; then
-            log "usbipd: already running in device mode"
+          if device_mode && listening; then
+            log "usbipd: already running in device mode and listening on TCP $port"
             return 0
           fi
-          if pgrep -x usbipd >/dev/null; then
-            log "usbipd: running, but not in device mode; stopping..."
+          if pgrep -x usbipd >/dev/null && ! device_mode; then
+            log "usbipd: host-mode daemon found; stopping before device-mode start..."
             if as_root pkill -x usbipd; then
               log "usbipd: stopped existing daemon"
             else
@@ -208,20 +226,55 @@ def _fix_script(cp: configparser.ConfigParser) -> str:
               failed=1
             fi
             sleep 0.5
+          elif pgrep -x usbipd >/dev/null; then
+            log "usbipd: device-mode daemon found but not listening; restarting..."
+            as_root pkill -x usbipd 2>/dev/null || true
+            sleep 0.5
           else
             log "usbipd: not running"
           fi
           log "usbipd: starting device mode with 'usbipd --device -D'..."
           if as_root usbipd --device -D; then
             sleep 0.5
-            if device_mode; then
-              log "usbipd: device-mode start success"
+            if device_mode && listening; then
+              log "usbipd: device-mode start success; listening on TCP $port"
             else
-              log "usbipd: command returned success but device-mode daemon was not found"
+              log "usbipd: command returned success but device-mode listener was not found"
               failed=1
             fi
           else
             log "usbipd: device-mode start FAILED"
+            failed=1
+          fi
+        }}
+
+        ensure_host_mode_usbipd() {{
+          if pgrep -x usbipd >/dev/null && ! device_mode && listening; then
+            log "usbipd: already running in host mode and listening on TCP $port"
+            return 0
+          fi
+          if pgrep -x usbipd >/dev/null; then
+            if device_mode; then
+              log "usbipd: device-mode daemon found; stopping before host-mode start..."
+            else
+              log "usbipd: host-mode daemon found but not listening; restarting..."
+            fi
+            as_root pkill -x usbipd 2>/dev/null || true
+            sleep 0.5
+          else
+            log "usbipd: not running"
+          fi
+          log "usbipd: starting host mode with 'usbipd -D'..."
+          if as_root usbipd -D; then
+            sleep 0.5
+            if pgrep -x usbipd >/dev/null && ! device_mode && listening; then
+              log "usbipd: host-mode start success; listening on TCP $port"
+            else
+              log "usbipd: command returned success but host-mode listener was not found"
+              failed=1
+            fi
+          else
+            log "usbipd: host-mode start FAILED"
             failed=1
           fi
         }}
@@ -234,7 +287,7 @@ def _fix_script(cp: configparser.ConfigParser) -> str:
         if [ "$need_device_mode" = 1 ]; then
           ensure_device_mode_usbipd
         else
-          log "usbipd: device mode not required for this UDC"
+          ensure_host_mode_usbipd
         fi
 
         if [ "$failed" = 0 ]; then
@@ -244,7 +297,6 @@ def _fix_script(cp: configparser.ConfigParser) -> str:
         fi
         exit "$failed"
     """)
-
 
 def _run_diagnosis(client, cp: configparser.ConfigParser) -> list[str]:
     rc, out, err = _ssh_run(client, f"bash -c {shlex.quote(_diagnose_script(cp))}")

@@ -102,9 +102,11 @@ port) and fails with a message naming the specific `config.ini` key to fix.
 
 When Linux USB gadget prerequisites are missing, the wrapper fix prints verbose
 status such as `not loaded; loading...`, `load success`, or `load FAILED` for
-`libcomposite`, `usbip-vudc`, `raw_gadget`, `dummy_hcd`, and for vudc
-`usbipd --device -D`. Direct pytest runs can also auto-fix with
-`USBIP_TEST_AUTO_FIX=1`; set `USBIP_TEST_AUTO_FIX=0` to disable auto-fix.
+`libcomposite`, `usbip-vudc`, `raw_gadget`, and `dummy_hcd`. It also checks the
+configured USB/IP TCP port and starts `usbipd --device -D` for `usbip-vudc` or
+host-mode `usbipd -D` for dummy_hcd / non-vudc labs. Direct pytest runs can also
+auto-fix with `USBIP_TEST_AUTO_FIX=1`; set `USBIP_TEST_AUTO_FIX=0` to disable
+auto-fix.
 
 > It also asserts the server's `test_dir` is **byte-for-byte in sync** with
 > this checkout's `test/linux/` (`test_linux_deploy_in_sync`). The harness runs

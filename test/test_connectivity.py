@@ -101,10 +101,12 @@ def _linux_uses_vudc(config) -> bool:
 
 def _linux_usbip_issues(config, ssh, *, require_device_mode: bool = False) -> list[str]:
     udc = config["linux"].get("udc_name", "usbip-vudc.0")
+    port = config.getint("server", "port", fallback=DEFAULT_USBIP_PORT)
     check_device_mode = require_device_mode and "vudc" in udc
     script = textwrap.dedent(f"""
         set -u
         udc={shlex.quote(udc)}
+        port={port}
         need_device_mode={'1' if check_device_mode else '0'}
 
         if [ ! -d /sys/kernel/config/usb_gadget ]; then
@@ -129,15 +131,28 @@ def _linux_usbip_issues(config, ssh, *, require_device_mode: bool = False) -> li
         device_mode() {{
           pgrep -af usbipd | grep -qE -- '(^|[[:space:]])(-e|--device)([[:space:]]|$)'
         }}
-        if [ "$need_device_mode" = 1 ] && ! device_mode; then
-          echo "usbipd: no device-mode daemon found"
+        listening() {{
+          (ss -ltnH 2>/dev/null || netstat -ltn 2>/dev/null) | grep -q ":$port "
+        }}
+        if [ "$need_device_mode" = 1 ]; then
+          if ! device_mode; then
+            echo "usbipd: no device-mode daemon found"
+          fi
+        else
+          if ! pgrep -x usbipd >/dev/null; then
+            echo "usbipd: no host-mode daemon found"
+          elif device_mode; then
+            echo "usbipd: running in device mode, but host mode is required for udc=$udc"
+          fi
+        fi
+        if ! listening; then
+          echo "usbipd: no listener on TCP $port"
         fi
     """)
     rc, out, err = _ssh_run(ssh, f"bash -c {shlex.quote(script)}")
     if rc != 0:
         return [f"preflight check failed: {out}{err}".strip()]
     return [line.strip() for line in out.splitlines() if line.strip()]
-
 
 def _linux_usbip_fix_script(config, *, require_device_mode: bool) -> str:
     need_device_mode = require_device_mode and _linux_uses_vudc(config)
@@ -150,13 +165,18 @@ def _linux_usbip_fix_script(config, *, require_device_mode: bool) -> str:
             sudo -n "$@"
           fi
         }}
+        log() {{ printf '[fix] %s\\n' "$*"; }}
 
         mountpoint -q /sys/kernel/config 2>/dev/null \
-          || as_root mount -t configfs none /sys/kernel/config
+          || {{ log "configfs: not mounted; mounting..."; as_root mount -t configfs none /sys/kernel/config; }}
 
+        log "libcomposite: loading/checking..."
         as_root modprobe libcomposite
+        log "usbip-vudc: loading/checking..."
         as_root modprobe usbip_vudc 2>/dev/null || as_root modprobe usbip-vudc 2>/dev/null || true
+        log "raw_gadget: loading/checking..."
         as_root modprobe raw_gadget
+        log "dummy_hcd: loading/checking..."
         as_root modprobe dummy_hcd 2>/dev/null || true
 
         device_mode() {{
@@ -164,18 +184,30 @@ def _linux_usbip_fix_script(config, *, require_device_mode: bool) -> str:
         }}
         if [ {'1' if need_device_mode else '0'} = 1 ]; then
           if pgrep -x usbipd >/dev/null && ! device_mode; then
+            log "usbipd: host-mode daemon found; stopping before device-mode start..."
             as_root pkill -x usbipd 2>/dev/null || true
             sleep 0.5
           fi
           if ! device_mode; then
+            log "usbipd: starting device mode with 'usbipd --device -D'..."
             as_root usbipd --device -D
+            sleep 0.5
+          fi
+        else
+          if pgrep -x usbipd >/dev/null && device_mode; then
+            log "usbipd: device-mode daemon found; stopping before host-mode start..."
+            as_root pkill -x usbipd 2>/dev/null || true
+            sleep 0.5
+          fi
+          if ! pgrep -x usbipd >/dev/null; then
+            log "usbipd: starting host mode with 'usbipd -D'..."
+            as_root usbipd -D
             sleep 0.5
           fi
         fi
 
         echo USBIP-LINUX-FIX-DONE
     """)
-
 
 def _read_linux_usbip_fix_answer(prompt: str, pytestconfig=None) -> str:
     capman = None

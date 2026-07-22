@@ -120,6 +120,20 @@ Full integration:
 pytest test/ -v
 ```
 
+Current validated baseline for Tier A is `dummy_hcd` with `[linux] udc_name =
+dummy_udc.0` and `busid = auto`. On 2026-07-22, connectivity passed
+(`12 passed, 1 skipped`), the full Tier A matrix passed (`35 passed`), and the
+standard full suite passed (`72 passed, 9 skipped`). The skipped tests were the
+expected vUDC-only connectivity check, Tier B Raw Gadget lab-bring-up checks,
+and efficacy tests when `--run-efficacy` was not supplied.
+
+With efficacy enabled on the same dummy_hcd baseline, the full suite passed with
+no failures or errors: `75 passed, 5 skipped, 1 xfailed in 675.27s`. The five
+skips were the vUDC-only connectivity check and the Tier B Raw Gadget tests
+pending lab bring-up. The single xfail was `test_rogue_nic_appears`: the CDC ECM
+gadget attached and exposed the expected VID/PID, but this Windows client did
+not start a VID/PID-matched `Net` child.
+
 The efficacy / negative-control suite (`test_attack_efficacy.py`) is **opt-in**
 because it executes real payloads (keystroke injection, storage read) on the
 client. It is skipped by default; enable it explicitly:
@@ -207,6 +221,15 @@ registers the descriptor snapshot for UdeCx before plug-in. If this regresses,
 compare `usbip.exe port`, `Get-PnpDevice` for `VID_16C0`, and the `usbip2_ude`
 WPP lines around `device-type filter disabled`, `ALLOWED and snapshotted`, and
 `dev ... plugged in`.
+
+**Rogue NIC efficacy xfails with CDC ECM attached but no `Net` child.** On the
+dummy_hcd baseline the CDC ECM gadget attaches with the filter disabled and
+Windows exposes `USB\VID_16C0&PID_03EB`, but this Windows image does not start a
+VID/PID-matched `Net` child. `test_rogue_nic_appears` therefore treats attach
+and PnP exposure as hard preconditions, then xfails only for the specific
+no-network-child condition. This preserves the filter matrix coverage for the
+network class while avoiding a false infrastructure failure in the opt-in
+negative control.
 
 ## What each layer asserts
 

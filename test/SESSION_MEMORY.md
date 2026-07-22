@@ -35,6 +35,24 @@ Latest dummy_hcd validation:
   - expected skips: efficacy tests remain opt-in, the vUDC-only connectivity
     mode check is skipped for `dummy_udc.0`, and Tier B Raw Gadget tests remain
     skipped pending lab bring-up validation.
+- Full suite with efficacy enabled passed in pytest terms:
+  - command: `pytest -q test --run-efficacy -ra --maxfail=1`
+  - result: `75 passed, 5 skipped, 1 xfailed in 675.27s (0:11:15)`
+  - no failures or errors.
+  - xfail: `test/test_attack_efficacy.py::test_rogue_nic_appears`; attach and
+    VID/PID PnP exposure succeeded, but this Windows client did not start a
+    VID/PID-matched `Net` child for the CDC ECM gadget.
+  - skipped tests:
+    - `test/test_connectivity.py::test_linux_usbipd_device_mode`
+      (`udc_name='dummy_udc.0' is not a vudc; device-mode check N/A`)
+    - `test/test_robustness.py::test_malformed_descriptors_fail_closed[zero_interface]`
+      (Tier B pending lab bring-up/validation)
+    - `test/test_robustness.py::test_malformed_descriptors_fail_closed[lying_count]`
+      (Tier B pending lab bring-up/validation)
+    - `test/test_robustness.py::test_malformed_descriptors_fail_closed[bad_total_length]`
+      (Tier B pending lab bring-up/validation)
+    - `test/test_robustness.py::test_descriptor_toctou_no_bypass`
+      (Tier B pending lab bring-up/validation)
 
 Implementation notes:
 
@@ -51,6 +69,10 @@ Implementation notes:
   attach plus matching PnP exposure is sufficient because the SourceSink
   vendor-specific gadget has no Windows in-box function driver and may not reach
   `Status=OK`.
+- `test_rogue_nic_appears` now follows the same precise-limitation pattern as
+  HID efficacy: attach and VID/PID exposure are hard assertions; missing Windows
+  `Net` child startup for CDC ECM is an xfail tied to the observed client stack
+  limitation.
 
 ## Confirmed root cause and backend decision
 

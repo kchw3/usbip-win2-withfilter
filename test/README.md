@@ -43,9 +43,9 @@ pip install -r test/requirements.txt
 Linux USB/IP server (a VM is fine):
 ```
 modprobe libcomposite                 # configfs usb_gadget support
-modprobe usbip-vudc                   # virtual UDC exported by usbipd --device
+modprobe dummy_hcd                    # preferred Tier A UDC; exported via usbip-host
 modprobe raw_gadget                   # for Tier B
-modprobe dummy_hcd                    # software UDC for dummy_hcd / raw_gadget labs
+modprobe usbip-vudc                   # optional compatibility UDC
 apt install usbip                      # usbip + usbipd
 # copy test/linux/ to the server (path goes in config.ini [linux] test_dir)
 ```
@@ -66,12 +66,13 @@ Windows client (a VM with snapshots is recommended):
 > even when PowerShell's execution policy is `Restricted`; no
 > `Set-ExecutionPolicy` change is required on the client.
 
-> With `usbip-vudc`, the gadget is exported by `usbipd` running in **device
-> mode** (`usbipd --device`) and there is no `usbip bind` step — the harness
-> starts/swaps the daemon into the right mode automatically. The client attaches
-> with `usbip attach -r <server> -b usbip-vudc.0`. (With `dummy_hcd` the gadget
-> is a normal local device and the host-mode `usbip bind -b <busid>` path is
-> used instead.)
+> Prefer `dummy_hcd` for Tier A configfs gadgets:
+> `[linux] udc_name = dummy_udc.0` and `busid = auto`. The harness binds the
+> gadget, discovers the assigned Linux USB busid (for example `5-1`), unbinds
+> any local host driver, exports it with host-mode `usbipd`/`usbip bind`, and
+> attaches Windows to that resolved busid. `usbip-vudc` remains supported as a
+> compatibility backend (`udc_name = usbip-vudc.0`, `busid = usbip-vudc.0`), but
+> the lab kernel has reproduced a `usbip_vudc` crash during mass-storage teardown.
 
 ## Running
 
@@ -146,11 +147,11 @@ modprobe usbip-vudc          # creates the usbip-vudc.0 UDC
 ```
 Verify: `test -d /sys/kernel/config/usb_gadget && ls /sys/class/udc/`.
 
-The harness now preflights this automatically: before building any vudc gadget,
-`LinuxServer.ensure_vudc_ready()` (conftest.py) checks for libcomposite, the
-UDC, and a **device-mode** `usbipd`, attempts to set up each (mount configfs,
-`modprobe`, `usbipd --device -D`), and otherwise raises an error naming the
-exact command to run. `test_connectivity.py` also asserts these directly —
+The harness now preflights this automatically: before building any gadget,
+`LinuxServer.ensure_gadget_backend_ready()` (conftest.py) checks for
+libcomposite, the configured UDC, and the required `usbipd` mode. For dummy_hcd
+it uses host mode (`usbipd -D`); for vUDC it uses device mode
+(`usbipd --device -D`). `test_connectivity.py` also asserts these directly —
 run it first when wiring a new lab.
 
 **vudc gadget builds but the client never sees the device / `usbip list -r`

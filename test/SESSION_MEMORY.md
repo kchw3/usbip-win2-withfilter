@@ -8,9 +8,49 @@ Branch: `master`
 Remote target: `origin/master`
 User preference in this thread: commit and push directly to `master`.
 
-The pytest hang has been reproduced and attributed to a kernel crash in the
-Linux `usbip_vudc` backend. The Linux host is being rebooted; do not resume the
-matrix on vUDC. Continue with the dummy_hcd migration described below.
+The pytest hang was reproduced and attributed to a kernel crash in the Linux
+`usbip_vudc` backend. Tier A configfs gadget tests have now been migrated to
+`dummy_hcd`/`dummy_udc.0` with dynamic USB/IP bus-id discovery. Do not resume the
+matrix on vUDC except for explicit compatibility validation.
+
+Latest dummy_hcd validation:
+
+- local unit/syntax checks passed:
+  - `python3 -m py_compile test/conftest.py test/test_connectivity.py`
+  - `bash -n test/linux/gadget_lib.sh test/linux/gadgets/teardown.sh`
+  - `git diff --check`
+  - `pytest -q test/test_descriptors.py test/test_hid_probe.py test/test_raw_gadget.py test/test_parser_native.py`
+- `test/config.ini` was switched to `udc_name = dummy_udc.0`, `busid = auto`
+  (ignored local lab config).
+- `test/linux/` was deployed to `/opt/usbip-filter-test/linux/`.
+- Connectivity on dummy_hcd passed: `12 passed, 1 skipped`.
+- Targeted rows passed:
+  - `deny_all-hid_keyboard`
+  - `allow_hid-hid_keyboard`
+  - `allow_ms-mass_storage`
+- Full Tier A matrix passed on dummy_hcd:
+  - `35 passed in 548.17s (0:09:08)`
+- Full suite passed on dummy_hcd:
+  - `72 passed, 9 skipped in 523.97s (0:08:43)`
+  - expected skips: efficacy tests remain opt-in, the vUDC-only connectivity
+    mode check is skipped for `dummy_udc.0`, and Tier B Raw Gadget tests remain
+    skipped pending lab bring-up validation.
+
+Implementation notes:
+
+- `usbip_export auto` now resolves the enumerated dummy_hcd busid by VID/PID
+  (for example `5-1`), unbinds local Linux host interface drivers, loads
+  `usbip_host`, binds the device with `usbip bind`, and returns the resolved
+  busid to the Python harness.
+- The Python harness updates `linux.busid` after export so Windows attach and
+  rejection-event correlation use the actual busid instead of the configured
+  placeholder.
+- Teardown receives the resolved busid via `BUSID=...` before unbinding and
+  removing the configfs gadget.
+- `vendor_ff` is marked as driverless for allow-path matrix oracles: successful
+  attach plus matching PnP exposure is sufficient because the SourceSink
+  vendor-specific gadget has no Windows in-box function driver and may not reach
+  `Status=OK`.
 
 ## Confirmed root cause and backend decision
 

@@ -15,6 +15,7 @@ import configparser
 import json
 import os
 import queue
+import re
 import shlex
 import textwrap
 import threading
@@ -97,7 +98,8 @@ class LinuxServer:
         self._linux_section = s
         self.test_dir = s["test_dir"]
         self.udc = s.get("udc_name", "usbip-vudc.0")
-        self.busid = s.get("busid", self.udc)
+        self.configured_busid = s.get("busid", self.udc)
+        self.busid = self.configured_busid
         self.command_timeout = s.getfloat("command_timeout", fallback=60.0)
         self.client = paramiko.SSHClient()
         self.client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -217,9 +219,96 @@ class LinuxServer:
                 "usbip-vudc preflight failed on the Linux server "
                 f"(udc={self.udc!r}):\n{out.strip()}")
 
+    def ensure_dummy_ready(self) -> None:
+        """Server-side preflight for dummy_hcd-backed configfs gadgets."""
+        if "vudc" in self.udc:
+            return
+        script = textwrap.dedent(f"""
+            set -u
+            udc={shlex.quote(self.udc)}
+
+            if [ ! -d /sys/kernel/config/usb_gadget ]; then
+              mountpoint -q /sys/kernel/config 2>/dev/null \\
+                || mount -t configfs none /sys/kernel/config 2>/dev/null || true
+              modprobe libcomposite 2>/dev/null || true
+            fi
+            if [ ! -d /sys/kernel/config/usb_gadget ]; then
+              echo "PREFLIGHT-FAIL libcomposite not loaded: /sys/kernel/config/usb_gadget is absent." >&2
+              exit 21
+            fi
+
+            if [ ! -e "/sys/class/udc/$udc" ]; then
+              modprobe dummy_hcd 2>/dev/null || true
+            fi
+            if [ ! -e "/sys/class/udc/$udc" ]; then
+              echo "PREFLIGHT-FAIL UDC $udc not present under /sys/class/udc." >&2
+              echo "  fix on the [linux] server (as root): modprobe dummy_hcd" >&2
+              exit 22
+            fi
+
+            modprobe usbip_host 2>/dev/null || modprobe usbip-host 2>/dev/null || true
+            if ! lsmod | grep -q '^usbip_host[[:space:]]'; then
+              echo "PREFLIGHT-FAIL usbip_host module is not loaded" >&2
+              echo "  fix on the [linux] server (as root): modprobe usbip_host" >&2
+              exit 24
+            fi
+
+            device_mode() {{ ps -C usbipd -o args= 2>/dev/null | grep -qE -- '(^|[[:space:]])(-e|--device)([[:space:]]|$)'; }}
+            if pgrep -x usbipd >/dev/null && device_mode; then
+              pkill -x usbipd 2>/dev/null || true; sleep 0.5
+            fi
+            if ! pgrep -x usbipd >/dev/null; then
+              usbipd -D 2>/dev/null || true; sleep 0.5
+            fi
+            if ! pgrep -x usbipd >/dev/null || device_mode; then
+              echo "PREFLIGHT-FAIL usbipd is not running in host mode" >&2
+              echo "  fix on the [linux] server: usbipd -D" >&2
+              exit 23
+            fi
+
+            echo PREFLIGHT-OK
+        """)
+        out = self.run(
+            f"bash -c {shlex.quote(script)}", check=False,
+            label=f"preflight dummy_hcd {self.udc}")
+        if "PREFLIGHT-OK" not in out:
+            raise RuntimeError(
+                "dummy_hcd preflight failed on the Linux server "
+                f"(udc={self.udc!r}):\n{out.strip()}")
+
+    def ensure_gadget_backend_ready(self) -> None:
+        if "vudc" in self.udc:
+            self.ensure_vudc_ready()
+        else:
+            self.ensure_dummy_ready()
+
+    def _export_gadget(
+        self, *, label: str, vid: str | None = None, pid: str | None = None,
+    ) -> str:
+        env = f"UDC_NAME={shlex.quote(self.udc)}"
+        if vid:
+            env += f" VID={shlex.quote(vid)}"
+        if pid:
+            env += f" PID={shlex.quote(pid)}"
+        out = self.run(
+            f"{env} "
+            f"bash -c 'source {shlex.quote(self.test_dir)}/gadget_lib.sh; "
+            f"usbip_export {shlex.quote(self.configured_busid)}'",
+            label=label)
+        busids = [
+            line.strip() for line in out.splitlines()
+            if re.fullmatch(r"(?:[0-9]+-[0-9]+(?:\.[0-9]+)*|[-A-Za-z0-9_.]*vudc[-A-Za-z0-9_.]*)",
+                            line.strip())
+        ]
+        busid = busids[-1] if busids else ""
+        if not busid:
+            raise RuntimeError(f"could not resolve exported USB/IP busid:\n{out}")
+        self.busid = busid
+        return busid
+
     def build_gadget(self, name: str, vid: str | None = None, pid: str | None = None,
                      extra_env: dict[str, str] | None = None) -> None:
-        self.ensure_vudc_ready()
+        self.ensure_gadget_backend_ready()
         env = f"UDC_NAME={shlex.quote(self.udc)}"
         if vid:
             env += f" VID={shlex.quote(vid)}"
@@ -230,11 +319,9 @@ class LinuxServer:
         self.run(
             f"{env} bash {shlex.quote(self.test_dir)}/gadgets/{name}.sh",
             label=f"build gadget {name} VID={vid or 'default'} PID={pid or 'default'}")
-        self.run(
-            f"UDC_NAME={shlex.quote(self.udc)} "
-            f"bash -c 'source {shlex.quote(self.test_dir)}/gadget_lib.sh; "
-            f"usbip_export {shlex.quote(self.busid)}'",
-            label=f"export gadget busid={self.busid}")
+        self._export_gadget(
+            label=f"export gadget busid={self.configured_busid}",
+            vid=vid, pid=pid)
 
     def fire_hid_marker(self, token: str, device: str = "auto") -> str:
         """Inject keystrokes via the attached HID gadget to drop a marker file.
@@ -289,7 +376,7 @@ class LinuxServer:
         RawGadgetRun with a verified live producer, or this raises. profile is a
         file under raw_gadget/ without .py (e.g. 'toctou').
         """
-        self.ensure_vudc_ready()
+        self.ensure_gadget_backend_ready()
         run_id = uuid.uuid4().hex
         run_dir = f"/run/usbip-tierb/{run_id}"
         driver, device = self._raw_udc_names()
@@ -309,10 +396,14 @@ class LinuxServer:
         pid = int(out.strip().splitlines()[-1])
 
         run = RawGadgetRun(run_id=run_id, profile=profile, pid=pid, run_dir=run_dir,
-                           vid=expected_vid, product_id=expected_pid, busid=self.busid)
+                           vid=expected_vid, product_id=expected_pid,
+                           busid=self.configured_busid)
         self._await_raw_ready(run, timeout)
         self._export_verified(expected_vid, expected_pid, timeout)
-        return run
+        return RawGadgetRun(
+            run_id=run.run_id, profile=run.profile, pid=run.pid,
+            run_dir=run.run_dir, vid=run.vid, product_id=run.product_id,
+            busid=self.busid)
 
     def _await_raw_ready(self, run: "RawGadgetRun", timeout: float) -> None:
         deadline = time.time() + timeout
@@ -342,11 +433,9 @@ class LinuxServer:
                            f"last status: {last}")
 
     def _export_verified(self, vid: str, pid: str, timeout: float) -> None:
-        self.run(
-            f"UDC_NAME={shlex.quote(self.udc)} "
-            f"bash -c 'source {shlex.quote(self.test_dir)}/gadget_lib.sh; "
-            f"usbip_export {shlex.quote(self.busid)}'",
-            label=f"export raw gadget busid={self.busid}")
+        self._export_gadget(
+            label=f"export raw gadget busid={self.configured_busid}",
+            vid=f"0x{vid}", pid=f"0x{pid}")
         want = f"{vid.lower()}:{pid.lower()}"
         deadline = time.time() + timeout
         listing = ""
@@ -373,6 +462,7 @@ class LinuxServer:
     def teardown(self) -> None:
         self.run(
             f"UDC_NAME={shlex.quote(self.udc)} "
+            f"BUSID={shlex.quote(self.busid)} "
             f"bash {shlex.quote(self.test_dir)}/gadgets/teardown.sh",
             check=False, timeout=20.0, label="teardown gadget")
 

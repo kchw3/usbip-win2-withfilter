@@ -15,6 +15,7 @@ class Device:
     gadget: str           # gadgets/<gadget>.sh
     pid: str              # hex, uppercase, no 0x
     tokens: frozenset[str]  # category tokens this device exposes
+    require_started: bool = True  # false when Windows has no in-box function driver
 
 
 # Category tokens match the userspace category ids in libusbip/src/vhci.cpp.
@@ -24,7 +25,7 @@ DEVICES = {
     "composite_ms_hid":    Device("composite_ms_hid",    "03EA", frozenset({"hid", "mass_storage"})),
     "cdc_nic":             Device("cdc_nic",             "03EB", frozenset({"network"})),
     "rndis_nic":           Device("rndis_nic",           "03EC", frozenset({"network", "vendor"})),
-    "vendor_ff":           Device("vendor_ff",           "03ED", frozenset({"vendor"})),
+    "vendor_ff":           Device("vendor_ff",           "03ED", frozenset({"vendor"}), False),
     "multicfg_hidden_hid": Device("multicfg_hidden_hid", "03EE", frozenset({"hid", "mass_storage"})),
 }
 

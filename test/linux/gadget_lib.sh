@@ -35,7 +35,9 @@ PRODUCT="${PRODUCT:-usbip-filter-test}"
 MANUF="${MANUF:-usbip-test}"
 SERIAL="${SERIAL:-0001}"
 
-# UDC to bind to. For vudc this is typically "usbip-vudc.0".
+# UDC to bind to. For vudc this is typically "usbip-vudc.0"; for dummy_hcd it
+# is usually "dummy_udc.0". With dummy_hcd, the USB/IP busid is assigned only
+# after bind and must be discovered dynamically from the enumerated host device.
 UDC_NAME="${UDC_NAME:-usbip-vudc.0}"
 
 # Backing image for mass storage functions.
@@ -172,6 +174,52 @@ g_bind() {
   echo "${UDC_NAME}" > "${G}/UDC"
 }
 
+_usb_id_norm() {
+  local v="${1,,}"
+  v="${v#0x}"
+  printf '%04x' "$((16#${v}))"
+}
+
+usbip_find_busid() {
+  local src_vid="${VID}"
+  local src_pid="${PID}"
+  [[ -f "${G}/idVendor" ]] && src_vid="$(<"${G}/idVendor")"
+  [[ -f "${G}/idProduct" ]] && src_pid="$(<"${G}/idProduct")"
+  local vid; vid="$(_usb_id_norm "${src_vid}")"
+  local pid; pid="$(_usb_id_norm "${src_pid}")"
+  local timeout="${1:-10}"
+  local deadline=$((SECONDS + timeout))
+  local dev idv idp
+
+  while (( SECONDS <= deadline )); do
+    for dev in /sys/bus/usb/devices/*; do
+      [[ -f "${dev}/idVendor" && -f "${dev}/idProduct" ]] || continue
+      [[ "$(basename "${dev}")" != *:* ]] || continue
+      idv="$(<"${dev}/idVendor")"
+      idp="$(<"${dev}/idProduct")"
+      if [[ "${idv,,}" == "${vid}" && "${idp,,}" == "${pid}" ]]; then
+        basename "${dev}"
+        return 0
+      fi
+    done
+    sleep 0.5
+  done
+
+  echo "usbip_find_busid: no USB device found for VID=${vid} PID=${pid}" >&2
+  return 1
+}
+
+_usbip_unbind_host_drivers() {
+  local busid="$1"
+  local intf driver
+  for intf in /sys/bus/usb/devices/"${busid}":*; do
+    [[ -e "${intf}" ]] || continue
+    [[ -L "${intf}/driver" ]] || continue
+    driver="$(basename "$(readlink -f "${intf}/driver")")"
+    echo "$(basename "${intf}")" > "/sys/bus/usb/drivers/${driver}/unbind" 2>/dev/null || true
+  done
+}
+
 # _usbipd_ensure <host|device> : ensure usbipd is running in the requested mode.
 # usbipd runs in exactly one mode at a time (host mode exports usbip-host stub
 # devices; device mode '--device' exports vudc gadgets), so if it is up in the
@@ -213,6 +261,7 @@ usbip_export() {
     local i
     for i in 1 2 3 4 5; do
       if usbip list -r 127.0.0.1 2>/dev/null | grep -q "${busid}"; then
+        echo "${busid}"
         return 0
       fi
       sleep 1
@@ -222,8 +271,14 @@ usbip_export() {
     return 1
     ;;
   *)
+    if [[ -z "${busid}" || "${busid}" == "auto" || "${busid}" == dummy* ]]; then
+      busid="$(usbip_find_busid)"
+    fi
+    modprobe usbip_host 2>/dev/null || modprobe usbip-host 2>/dev/null || true
     _usbipd_ensure host
+    _usbip_unbind_host_drivers "${busid}"
     usbip bind -b "${busid}"
+    echo "${busid}"
     ;;
   esac
 }

@@ -126,6 +126,9 @@ def _linux_usbip_issues(config, ssh, *, require_device_mode: bool = False) -> li
              ! ls /sys/class/udc/dummy* >/dev/null 2>&1; then
             echo "dummy_hcd: no dummy UDC detected"
           fi
+          if ! lsmod | grep -q '^usbip_host[[:space:]]'; then
+            echo "usbip_host: module is not loaded"
+          fi
         fi
 
         device_mode() {{
@@ -178,6 +181,8 @@ def _linux_usbip_fix_script(config, *, require_device_mode: bool) -> str:
         as_root modprobe raw_gadget
         log "dummy_hcd: loading/checking..."
         as_root modprobe dummy_hcd 2>/dev/null || true
+        log "usbip_host: loading/checking..."
+        as_root modprobe usbip_host 2>/dev/null || as_root modprobe usbip-host 2>/dev/null || true
 
         device_mode() {{
           ps -C usbipd -o args= 2>/dev/null | grep -qE -- '(^|[[:space:]])(-e|--device)([[:space:]]|$)'
@@ -247,8 +252,9 @@ def _linux_usbip_fix_allowed(config, ssh, issues: list[str], pytestconfig=None) 
         "\nLinux USB/IP prerequisites look incomplete:\n"
         + "".join(f"  - {issue}\n" for issue in issues)
         + "\nRun the automatic Linux-side fix over SSH?\n"
-        + "It will run: modprobe libcomposite, usbip-vudc, raw_gadget, "
-          "dummy_hcd, and for usbip-vudc start usbipd --device -D.\n"
+        + "It will run: modprobe libcomposite, raw_gadget, dummy_hcd, "
+          "usbip-vudc if available, and start usbipd in the mode required "
+          "by the configured UDC.\n"
         + "This requires root SSH or passwordless sudo. Apply fix? [y/N] "
     )
     return _read_linux_usbip_fix_answer(prompt, pytestconfig) in {"y", "yes"}

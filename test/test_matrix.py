@@ -96,10 +96,16 @@ def test_decision(linux, win, policy, device_key):
 
     if should_allow:
         # Successful attach precedes asynchronous PnP + function-driver loading.
-        present = _wait(lambda: win.pnp_present(VID, dev.pid))
-        assert present, (
-            f"allowed device never became present+started: policy={policy} "
-            f"device={device_key}; attach={attach}")
+        if dev.require_started:
+            present = _wait(lambda: win.pnp_present(VID, dev.pid))
+            assert present, (
+                f"allowed device never became present+started: policy={policy} "
+                f"device={device_key}; attach={attach}")
+        else:
+            exposure = _wait(lambda: win.pnp_exposure(VID, dev.pid))
+            assert exposure, (
+                f"allowed driverless device never appeared in PnP: policy={policy} "
+                f"device={device_key}; attach={attach}")
     else:
         # Security-critical: watch the whole window for any present PnP node,
         # even failed-start/transient nodes. A single immediate sample can miss

@@ -173,15 +173,18 @@ Run pytest with `-s` to see live `[cleanup]` diagnostics. Current helpers print
 `[cleanup] helpers.ps1 native-timeout revision: async-v3` during the
 filter/PnP phase; if that line is absent, the Windows VM is still running an
 older `helpers.ps1` copy. The pytest harness prints `[cleanup] starting Windows cleanup` and then drives
-cleanup as separate bounded WinRM calls: optional `usbip.exe detach`, `filter
---disable`, stale `VID_16C0` PnP enumeration, one removal call per stale node,
-and final verification. The last printed `[cleanup] phase:` line identifies the
-Windows operation that timed out. Cleanup now defaults to
-`[windows] cleanup_detach=skip` because in this lab even
-`detach --all=closeonly` can wedge before the first matrix row. Set it to
-`closeonly` or `full` only when you explicitly want the harness to try USB/IP
-detach; tune `[windows] cleanup_step_timeout` for individual Windows operations
-or `[windows] cleanup_timeout` for the legacy whole-cleanup limit.
+cleanup as separate bounded WinRM calls: optional `usbip.exe detach`, optional
+`filter --disable`, stale `VID_16C0` PnP enumeration, one removal call per stale
+node, and final verification. The last printed `[cleanup] phase:` line
+identifies the Windows operation that timed out. Cleanup now defaults to
+`[windows] cleanup_detach=skip` and `[windows] cleanup_reset_policy=false`
+because in this lab both `detach --all=closeonly` and `filter --disable` can
+wedge before the first matrix row. Each test still sets its intended policy
+before attaching; those real policy calls print `[policy] phase:` and use
+`[windows] winrm_step_timeout` so policy hangs are tied to the row under test.
+Set `cleanup_detach` to `closeonly` or `full` only when you explicitly want the
+harness to try USB/IP detach; tune `[windows] cleanup_step_timeout` for cleanup
+operations or `[windows] cleanup_timeout` for the legacy whole-cleanup limit.
 
 
 **`usbip.exe attach` succeeds but no `VID_16C0` node becomes present in the

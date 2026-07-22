@@ -345,6 +345,8 @@ class WindowsClient:
         self.server = cp["server"]["address"]
         self.cleanup_timeout = w.getfloat("cleanup_timeout", fallback=60.0)
         self.cleanup_step_timeout = w.getfloat("cleanup_step_timeout", fallback=20.0)
+        self.winrm_step_timeout = w.getfloat("winrm_step_timeout", fallback=30.0)
+        self.cleanup_reset_policy = w.getboolean("cleanup_reset_policy", fallback=False)
         self.cleanup_detach = w.get("cleanup_detach", "skip").strip().lower()
         if self.cleanup_detach not in {"closeonly", "full", "skip"}:
             raise ValueError(
@@ -384,13 +386,23 @@ class WindowsClient:
         expected_categories: tuple[str, ...] = ()
         if disable:
             expected_mode = "disabled"
-            r = self.ps("Set-FilterPolicy -Disable -UsbipExe $UsbipExe")
+            print("[policy] phase: filter --disable", flush=True)
+            r = self._ps_with_timeout(
+                "Set-FilterPolicy -Disable -UsbipExe $UsbipExe",
+                self.winrm_step_timeout, "policy filter --disable")
         elif deny_all:
-            r = self.ps("Set-FilterPolicy -DenyAll -UsbipExe $UsbipExe")
+            print("[policy] phase: filter --deny-all", flush=True)
+            r = self._ps_with_timeout(
+                "Set-FilterPolicy -DenyAll -UsbipExe $UsbipExe",
+                self.winrm_step_timeout, "policy filter --deny-all")
         else:
             expected_categories = tuple(sorted(allow or []))
             joined = ",".join(f"'{c}'" for c in expected_categories)
-            r = self.ps(f"Set-FilterPolicy -Allow {joined} -UsbipExe $UsbipExe")
+            print(f"[policy] phase: filter --allow {','.join(expected_categories)}",
+                  flush=True)
+            r = self._ps_with_timeout(
+                f"Set-FilterPolicy -Allow {joined} -UsbipExe $UsbipExe",
+                self.winrm_step_timeout, "policy filter --allow")
 
         raw = self._json_output(r)
         state = FilterPolicyState(
@@ -569,14 +581,17 @@ $nodes = @(Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue |
             r = self._cleanup_step(f"usbip.exe detach {detach_arg}", detach_script, 25.0)
             self._print_cleanup_output(r)
 
-        r = self._cleanup_step("filter --disable", """
+        if self.cleanup_reset_policy:
+            r = self._cleanup_step("filter --disable", """
 Invoke-UsbipChecked -UsbipExe $UsbipExe -Arguments @('filter', '--disable') `
     -TimeoutSeconds 15 | Out-Null
 Write-Output '[cleanup] filter --disable completed'
 [pscustomobject]@{ Ok = $true } | ConvertTo-Json -Compress
 """)
-        self._print_cleanup_output(r)
-        self._json_output(r)
+            self._print_cleanup_output(r)
+            self._json_output(r)
+        else:
+            print("[cleanup] skipping filter reset by request", flush=True)
 
         nodes = self._cleanup_list_nodes("enumerate stale VID_16C0 PnP nodes")
         if not nodes:

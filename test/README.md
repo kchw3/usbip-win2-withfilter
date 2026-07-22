@@ -185,6 +185,9 @@ before attaching; those real policy calls print `[policy] phase:` and use
 Set `cleanup_detach` to `closeonly` or `full` only when you explicitly want the
 harness to try USB/IP detach; tune `[windows] cleanup_step_timeout` for cleanup
 operations or `[windows] cleanup_timeout` for the legacy whole-cleanup limit.
+Linux SSH commands also have phase labels and a timeout; tune
+`[linux] command_timeout` if gadget build/export legitimately needs more than
+the default 60 seconds.
 
 
 **`usbip.exe attach` succeeds but no `VID_16C0` node becomes present in the

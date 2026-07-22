@@ -78,6 +78,10 @@ def _wait_for_rejection(win, cursor: int, vid: str, pid: str, busid: str,
 def test_decision(linux, win, policy, device_key):
     dev = DEVICES[device_key]
     should_allow = expected_allow(policy, device_key)
+    print(
+        f"[matrix] row: policy={policy} device={device_key} "
+        f"expected_allow={should_allow}",
+        flush=True)
 
     linux.build_gadget(dev.gadget, vid=f"0x{VID}", pid=f"0x{dev.pid}")
     _set_policy(win, policy)

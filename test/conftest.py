@@ -98,6 +98,7 @@ class LinuxServer:
         self.test_dir = s["test_dir"]
         self.udc = s.get("udc_name", "usbip-vudc.0")
         self.busid = s.get("busid", self.udc)
+        self.command_timeout = s.getfloat("command_timeout", fallback=60.0)
         self.client = paramiko.SSHClient()
         self.client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         kwargs = {"username": s["user"]}
@@ -107,11 +108,44 @@ class LinuxServer:
             kwargs["key_filename"] = os.path.expanduser(s["key_filename"])
         self.client.connect(s["host"], **kwargs)
 
-    def run(self, cmd: str, check: bool = True) -> str:
+    def run(
+        self, cmd: str, check: bool = True, timeout: float | None = None,
+        label: str | None = None,
+    ) -> str:
+        limit = self.command_timeout if timeout is None else timeout
+        phase = label or cmd
+        if label:
+            print(f"[linux] phase: {phase} (timeout={limit:g}s)", flush=True)
+
         _in, out, err = self.client.exec_command(cmd)
-        rc = out.channel.recv_exit_status()
-        stdout = out.read().decode()
-        stderr = err.read().decode()
+        channel = out.channel
+        deadline = time.time() + limit
+        stdout_chunks: list[str] = []
+        stderr_chunks: list[str] = []
+
+        def drain() -> None:
+            while channel.recv_ready():
+                stdout_chunks.append(channel.recv(65535).decode(errors="replace"))
+            while channel.recv_stderr_ready():
+                stderr_chunks.append(channel.recv_stderr(65535).decode(errors="replace"))
+
+        while not channel.exit_status_ready():
+            drain()
+            if time.time() >= deadline:
+                drain()
+                channel.close()
+                stdout = "".join(stdout_chunks)
+                stderr = "".join(stderr_chunks)
+                raise TimeoutError(
+                    f"[linux] phase {phase!r} did not complete within {limit:g}s\n"
+                    f"cmd: {cmd}\nstdout:\n{stdout}\nstderr:\n{stderr}")
+            time.sleep(0.1)
+
+        drain()
+        rc = channel.recv_exit_status()
+        drain()
+        stdout = "".join(stdout_chunks)
+        stderr = "".join(stderr_chunks)
         if check and rc != 0:
             raise RuntimeError(f"[linux] {cmd!r} exit {rc}\n{stdout}\n{stderr}")
         return stdout + stderr
@@ -175,7 +209,9 @@ class LinuxServer:
 
             echo PREFLIGHT-OK
         """)
-        out = self.run(f"bash -c {shlex.quote(script)}", check=False)
+        out = self.run(
+            f"bash -c {shlex.quote(script)}", check=False,
+            label=f"preflight vudc {self.udc}")
         if "PREFLIGHT-OK" not in out:
             raise RuntimeError(
                 "usbip-vudc preflight failed on the Linux server "
@@ -191,10 +227,14 @@ class LinuxServer:
             env += f" PID={shlex.quote(pid)}"
         for k, v in (extra_env or {}).items():
             env += f" {k}={shlex.quote(v)}"
-        self.run(f"{env} bash {shlex.quote(self.test_dir)}/gadgets/{name}.sh")
-        self.run(f"UDC_NAME={shlex.quote(self.udc)} "
-                 f"bash -c 'source {shlex.quote(self.test_dir)}/gadget_lib.sh; "
-                 f"usbip_export {shlex.quote(self.busid)}'")
+        self.run(
+            f"{env} bash {shlex.quote(self.test_dir)}/gadgets/{name}.sh",
+            label=f"build gadget {name} VID={vid or 'default'} PID={pid or 'default'}")
+        self.run(
+            f"UDC_NAME={shlex.quote(self.udc)} "
+            f"bash -c 'source {shlex.quote(self.test_dir)}/gadget_lib.sh; "
+            f"usbip_export {shlex.quote(self.busid)}'",
+            label=f"export gadget busid={self.busid}")
 
     def fire_hid_marker(self, token: str, device: str = "auto") -> str:
         """Inject keystrokes via the attached HID gadget to drop a marker file.
@@ -302,9 +342,11 @@ class LinuxServer:
                            f"last status: {last}")
 
     def _export_verified(self, vid: str, pid: str, timeout: float) -> None:
-        self.run(f"UDC_NAME={shlex.quote(self.udc)} "
-                 f"bash -c 'source {shlex.quote(self.test_dir)}/gadget_lib.sh; "
-                 f"usbip_export {shlex.quote(self.busid)}'")
+        self.run(
+            f"UDC_NAME={shlex.quote(self.udc)} "
+            f"bash -c 'source {shlex.quote(self.test_dir)}/gadget_lib.sh; "
+            f"usbip_export {shlex.quote(self.busid)}'",
+            label=f"export raw gadget busid={self.busid}")
         want = f"{vid.lower()}:{pid.lower()}"
         deadline = time.time() + timeout
         listing = ""
@@ -329,8 +371,10 @@ class LinuxServer:
         return log
 
     def teardown(self) -> None:
-        self.run(f"UDC_NAME={shlex.quote(self.udc)} "
-                 f"bash {shlex.quote(self.test_dir)}/gadgets/teardown.sh", check=False)
+        self.run(
+            f"UDC_NAME={shlex.quote(self.udc)} "
+            f"bash {shlex.quote(self.test_dir)}/gadgets/teardown.sh",
+            check=False, timeout=20.0, label="teardown gadget")
 
 
 class WindowsClient:
@@ -416,8 +460,11 @@ class WindowsClient:
         return state
 
     def attach_result(self, busid: str) -> AttachResult:
-        r = self.ps(f"Invoke-Attach -Server '{self.server}' -BusId '{busid}' "
-                    f"-UsbipExe $UsbipExe | ConvertTo-Json -Compress")
+        print(f"[windows] phase: usbip.exe attach busid={busid}", flush=True)
+        r = self._ps_with_timeout(
+            f"Invoke-Attach -Server '{self.server}' -BusId '{busid}' "
+            f"-UsbipExe $UsbipExe | ConvertTo-Json -Compress",
+            self.winrm_step_timeout, "attach")
         raw = self._json_output(r)
         return AttachResult(ok=bool(raw["Ok"]), exit_code=int(raw["ExitCode"]),
                             output=str(raw["Output"]))
@@ -436,7 +483,9 @@ class WindowsClient:
         return [json.loads(ln) for ln in r.std_out.decode().splitlines() if ln.strip()]
 
     def event_cursor(self) -> int:
-        r = self.ps("Get-FilterEventCursor")
+        print("[windows] phase: read usbip2_ude event cursor", flush=True)
+        r = self._ps_with_timeout(
+            "Get-FilterEventCursor", self.winrm_step_timeout, "event cursor")
         return int(r.std_out.decode().strip())
 
     def rejection_event_after(

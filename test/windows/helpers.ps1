@@ -31,24 +31,16 @@ function Invoke-NativeWithTimeout {
     $psi.RedirectStandardError = $true
     $psi.CreateNoWindow = $true
 
-    $stdout = [System.Text.StringBuilder]::new()
-    $stderr = [System.Text.StringBuilder]::new()
     $p = [System.Diagnostics.Process]::new()
     $p.StartInfo = $psi
-    $outHandler = [System.Diagnostics.DataReceivedEventHandler]{
-        param($sender, $eventArgs)
-        if ($null -ne $eventArgs.Data) { $null = $stdout.AppendLine($eventArgs.Data) }
-    }
-    $errHandler = [System.Diagnostics.DataReceivedEventHandler]{
-        param($sender, $eventArgs)
-        if ($null -ne $eventArgs.Data) { $null = $stderr.AppendLine($eventArgs.Data) }
-    }
-    $p.add_OutputDataReceived($outHandler)
-    $p.add_ErrorDataReceived($errHandler)
 
     $null = $p.Start()
-    $p.BeginOutputReadLine()
-    $p.BeginErrorReadLine()
+    # DataReceivedEventHandler scriptblocks run on .NET worker threads. Under
+    # WinRM those threads have no PowerShell runspace, so invoking the callback
+    # can terminate the remote pipeline with a truncated "#< CLIXML" error.
+    # Task-based reads drain both pipes without executing PowerShell callbacks.
+    $stdoutTask = $p.StandardOutput.ReadToEndAsync()
+    $stderrTask = $p.StandardError.ReadToEndAsync()
 
     $timedOut = -not $p.WaitForExit($TimeoutSeconds * 1000)
     if ($timedOut) {
@@ -57,19 +49,25 @@ function Invoke-NativeWithTimeout {
         } catch {
             try { $p.Kill() } catch {}
         }
-    } else {
-        # Let async output callbacks drain after a normal process exit.
-        try { $p.WaitForExit() } catch {}
+        # Give a killed process a short bounded window to close redirected pipes.
+        try { $null = $p.WaitForExit(5000) } catch {}
     }
 
-    if (-not $timedOut) {
-        try { $p.CancelOutputRead() } catch {}
-        try { $p.CancelErrorRead() } catch {}
-    }
-    $p.remove_OutputDataReceived($outHandler)
-    $p.remove_ErrorDataReceived($errHandler)
+    # Process exit closes both redirected streams; wait only a bounded interval
+    # for the task continuations to publish the captured text.
+    try { $null = $stdoutTask.Wait(5000) } catch {}
+    try { $null = $stderrTask.Wait(5000) } catch {}
 
-    $text = ($stdout.ToString() + $stderr.ToString()).TrimEnd()
+    $stdoutText = ''
+    $stderrText = ''
+    if ($stdoutTask.IsCompleted) {
+        try { $stdoutText = $stdoutTask.GetAwaiter().GetResult() } catch {}
+    }
+    if ($stderrTask.IsCompleted) {
+        try { $stderrText = $stderrTask.GetAwaiter().GetResult() } catch {}
+    }
+
+    $text = ($stdoutText + $stderrText).TrimEnd()
     $code = if ($timedOut) { -1 } else { $p.ExitCode }
 
     if ($timedOut) {
@@ -387,7 +385,7 @@ function Clear-UsbipState {
         [ValidateSet('closeonly', 'full', 'skip')]
         [string] $DetachMode = 'skip'
     )
-    Write-Output "[cleanup] helpers.ps1 native-timeout revision: async-v3"
+    Write-Output "[cleanup] helpers.ps1 native-timeout revision: task-v4"
     # Detach is best-effort and intentionally opt-in for cleanup. In some wedged
     # UdeCx/plugin-out states even closeonly can block the WinRM cleanup path
     # before tests start. Stale VID nodes are still reaped below; set

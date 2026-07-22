@@ -180,7 +180,7 @@ _usbipd_ensure() {
   local want="$1"   # host | device
   local running_mode=""
   if pgrep -x usbipd >/dev/null; then
-    if pgrep -af usbipd | grep -qE -- '(^|[[:space:]])(-e|--device)([[:space:]]|$)'; then
+    if ps -C usbipd -o args= 2>/dev/null | grep -qE -- '(^|[[:space:]])(-e|--device)([[:space:]]|$)'; then
       running_mode="device"
     else
       running_mode="host"

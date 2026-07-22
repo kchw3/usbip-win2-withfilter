@@ -8,46 +8,89 @@ Branch: `master`
 Remote target: `origin/master`
 User preference in this thread: commit and push directly to `master`.
 
-The active investigation is pytest hanging during `pytest -s` when the run reaches
-`test/test_matrix.py`. Earlier hangs looked like Windows cleanup, but the latest
-instrumentation showed cleanup now completes:
+The pytest hang has been reproduced and attributed to a kernel crash in the
+Linux `usbip_vudc` backend. The Linux host is being rebooted; do not resume the
+matrix on vUDC. Continue with the dummy_hcd migration described below.
+
+## Confirmed root cause and backend decision
+
+The apparent pytest freeze was reproduced and traced to a repeatable Linux kernel
+crash in the `usbip_vudc` backend. An allowed mass-storage matrix row triggers a
+NULL dereference while the file-storage function dequeues an endpoint:
 
 ```text
-[cleanup] starting Windows cleanup (timeout=60s, step_timeout=20s, detach=skip)
-[cleanup] skipping USB/IP detach by request
-[cleanup] skipping filter reset by request
-[cleanup] phase: enumerate stale VID_16C0 PnP nodes (timeout=20s)
-[cleanup] no stale VID_16C0 PnP nodes found
-[cleanup] phase: verify no stale VID_16C0 PnP nodes remain (timeout=20s)
-[cleanup] Windows cleanup completed
+BUG: kernel NULL pointer dereference, address: 0000000000000398
+Comm: file-storage
+RIP: 0010:vep_dequeue+0x27/0x120 [usbip_vudc]
+usb_ep_dequeue+0x22/0x80 [udc_core]
+fsg_main_thread+0x3f0/0x1d90 [usb_f_mass_storage]
+note: file-storage[...] exited with irqs disabled
 ```
 
-Because no `[policy]` line appeared afterward, the hang is after fixture cleanup
-and before the matrix policy call. In `test/test_matrix.py`, that maps to:
+After the oops, gadget builders and teardown processes remain permanently in
+uninterruptible `D` state in `gadget_dev_desc_UDC_store` or `fsg_unbind`. Even
+reading the configfs gadget `UDC` attribute can block. SSH timeouts make pytest
+report the failure, but only rebooting the Linux host recovers the kernel state.
 
-```python
-linux.build_gadget(dev.gadget, vid=f"0x{VID}", pid=f"0x{dev.pid}")
-```
+Decision: migrate Tier A configfs gadget tests from `usbip-vudc` to
+`dummy_hcd`/`dummy_udc.0`. The gadget will bind to `dummy_udc.0`, enumerate on
+the synthetic Linux USB host, and be exported using host-mode `usbipd` plus
+`usbip bind`. Keep `usbip-vudc` only as an optional compatibility backend; do
+not rely on it for mass-storage or composite mass-storage tests.
 
-The latest patch adds Linux-side phase logging and SSH command timeouts so the
-next run identifies whether the stuck remote process is vUDC preflight, gadget
-build, or `usbip_export`.
+The dummy_hcd migration must add dynamic Linux USB bus-id discovery (for
+example `5-1`), unbind any Linux host driver that claims the synthetic device,
+export that bus-id, expose the resolved bus-id to Windows attach/event
+correlation, and unexport it before gadget teardown. Raw-gadget UDC naming must
+remain backend-specific.
 
-Expected new output near the next hang:
+## Worktree changes from the investigation
+
+Uncommitted fixes currently present:
+
+- `test/conftest.py`, `test/test_connectivity.py`, and
+  `test/linux/gadget_lib.sh` inspect only real processes named `usbipd` via
+  `ps -C usbipd -o args=`. The former `pgrep -af usbipd` check matched its own
+  diagnostic shell and falsely reported device mode after reboot.
+- `test/windows/helpers.ps1` uses `ReadToEndAsync()` tasks instead of
+  PowerShell `DataReceivedEventHandler` scriptblocks. The callbacks ran on
+  worker threads without a WinRM runspace and terminated policy calls with a
+  truncated `#< CLIXML` error. Revision marker is now `task-v4`.
+- Windows cleanup uses `${id}` correctly in its PowerShell error string; the
+  former `$id:` form was a parser error.
+- `test/README.md` documents the new `task-v4` helper marker.
+
+The corrected Linux `gadget_lib.sh` was deployed to
+`/opt/usbip-filter-test/linux`. The configured protected Windows helper path
+could not be overwritten by the WinRM account, so the corrected helper was
+uploaded temporarily to:
 
 ```text
-[matrix] row: policy=deny_all device=hid_keyboard expected_allow=False
-[linux] phase: preflight vudc usbip-vudc.0 (timeout=60s)
-[linux] phase: build gadget hid_keyboard VID=0x16C0 PID=0x03E8 (timeout=60s)
-[linux] phase: export gadget busid=usbip-vudc.0 (timeout=60s)
-[policy] phase: filter --deny-all
-[windows] phase: read usbip2_ude event cursor
-[windows] phase: usbip.exe attach busid=usbip-vudc.0
+C:\Users\User1\AppData\Local\Temp\usbip-filter-test-helpers.ps1
 ```
 
-Whichever phase is the last printed line is the next process/function to inspect.
-If a Linux phase times out, the exception includes the exact SSH command plus
-captured stdout/stderr.
+The ignored local `test/config.ini` currently points `[windows] helpers` at
+that temporary file. Connectivity helper-hash validation passed with it.
+
+## Resume after Linux reboot
+
+1. Run the connectivity suite with the existing virtual environment and
+   auto-fix enabled so required modules load and a backend-appropriate usbipd
+   starts.
+2. Implement the dummy_hcd backend migration before running another allowed
+   mass-storage row; running it on usbip-vudc will likely crash the kernel again.
+3. Deploy the changed `test/linux/` tree and verify
+   `test_linux_deploy_in_sync` plus the Windows helper hash check.
+4. Validate one deny and one allow case on dummy_hcd, then the allowed
+   mass-storage case, the complete matrix, and finally `pytest -s`.
+5. Keep destructive efficacy tests opt-in.
+
+Validation achieved before the second reproduced kernel crash:
+
+- all 13 connectivity/deployment checks passed;
+- `deny_all-hid_keyboard` passed end-to-end in 16.8 seconds;
+- the matrix passed 16 rows before `allow_ms-mass_storage` reproduced the
+  `usbip_vudc::vep_dequeue` oops during cleanup/teardown.
 
 ## Important deployment note
 

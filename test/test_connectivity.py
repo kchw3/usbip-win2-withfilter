@@ -129,7 +129,7 @@ def _linux_usbip_issues(config, ssh, *, require_device_mode: bool = False) -> li
         fi
 
         device_mode() {{
-          pgrep -af usbipd | grep -qE -- '(^|[[:space:]])(-e|--device)([[:space:]]|$)'
+          ps -C usbipd -o args= 2>/dev/null | grep -qE -- '(^|[[:space:]])(-e|--device)([[:space:]]|$)'
         }}
         listening() {{
           (ss -ltnH 2>/dev/null || netstat -ltn 2>/dev/null) | grep -q ":$port "
@@ -180,7 +180,7 @@ def _linux_usbip_fix_script(config, *, require_device_mode: bool) -> str:
         as_root modprobe dummy_hcd 2>/dev/null || true
 
         device_mode() {{
-          pgrep -af usbipd | grep -qE -- '(^|[[:space:]])(-e|--device)([[:space:]]|$)'
+          ps -C usbipd -o args= 2>/dev/null | grep -qE -- '(^|[[:space:]])(-e|--device)([[:space:]]|$)'
         }}
         if [ {'1' if need_device_mode else '0'} = 1 ]; then
           if pgrep -x usbipd >/dev/null && ! device_mode; then
@@ -338,7 +338,8 @@ def test_linux_usbipd_device_mode(config, ssh, pytestconfig):
     _maybe_fix_linux_usbip(config, ssh, require_device_mode=True, pytestconfig=pytestconfig)
     rc, out, _err = _ssh_run(
         ssh,
-        "pgrep -af usbipd | grep -qE -- '(^|[[:space:]])(-e|--device)([[:space:]]|$)' "
+        "ps -C usbipd -o args= 2>/dev/null | "
+        "grep -qE -- '(^|[[:space:]])(-e|--device)([[:space:]]|$)' "
         "&& echo found")
     assert rc == 0 and "found" in out, (
         f"no usbipd in device mode found for vudc udc_name={udc!r} -- vudc gadgets "

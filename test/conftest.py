@@ -193,7 +193,7 @@ class LinuxServer:
 
             # 3. usbipd must run in DEVICE mode (usbipd --device) to offer vudc
             #    gadgets; a host-mode daemon will not. Swap/start it if needed.
-            device_mode() {{ pgrep -af usbipd | grep -qE -- '(^|[[:space:]])(-e|--device)([[:space:]]|$)'; }}
+            device_mode() {{ ps -C usbipd -o args= 2>/dev/null | grep -qE -- '(^|[[:space:]])(-e|--device)([[:space:]]|$)'; }}
             if pgrep -x usbipd >/dev/null && ! device_mode; then
               pkill -x usbipd 2>/dev/null || true; sleep 0.5
             fi
@@ -569,7 +569,7 @@ class WindowsClient:
             raise TimeoutError(
                 f"Windows {label} did not complete within {timeout:g}s. "
                 "If this is cleanup, verify the deployed helpers.ps1 prints "
-                "'[cleanup] helpers.ps1 native-timeout revision: async-v3'.") from exc
+                "'[cleanup] helpers.ps1 native-timeout revision: task-v4'.") from exc
         if ok:
             return value
         raise value
@@ -662,7 +662,7 @@ if ($null -ne $removePnpDevice) {{
         [pscustomobject]@{{ Removed=$true; Method='Remove-PnpDevice'; InstanceId=$id }} | ConvertTo-Json -Compress
         return
     }} catch {{
-        Write-Output ("[cleanup] Remove-PnpDevice failed for $id: " + $_.Exception.Message)
+        Write-Output ("[cleanup] Remove-PnpDevice failed for ${{id}}: " + $_.Exception.Message)
     }}
 }} else {{
     Write-Output '[cleanup] Remove-PnpDevice not available; using pnputil.exe'

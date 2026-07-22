@@ -170,7 +170,7 @@ stale node, clear it by hand with `Remove-PnpDevice` when available, or with the
 portable `pnputil` fallback, for example
 `pnputil /remove-device "HID\VID_16C0&PID_03E8\..."`.
 Run pytest with `-s` to see live `[cleanup]` diagnostics. Current helpers print
-`[cleanup] helpers.ps1 native-timeout revision: async-v3` during the
+`[cleanup] helpers.ps1 native-timeout revision: task-v4` during the
 filter/PnP phase; if that line is absent, the Windows VM is still running an
 older `helpers.ps1` copy. The pytest harness prints `[cleanup] starting Windows cleanup` and then drives
 cleanup as separate bounded WinRM calls: optional `usbip.exe detach`, optional

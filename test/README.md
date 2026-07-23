@@ -335,27 +335,19 @@ completion and allows the benign Raw Gadget canary to attach through Windows.
   and trailing partial descriptors. `test_parser_native.py` pins this behaviour.
 - The TOCTOU case still probes genuinely uncertain end-to-end behaviour; a
   failure there is a real finding to file, not a flaky test.
-- **HID keystroke *injection* does not fire through the `usbip2_ude` client**
-  (`test_badusb_hid_keystrokes_execute` and `test_composite_both_channels_live`).
-  Injection writes 8-byte reports to the gadget's `/dev/hidgN`, which only works
-  while the gadget's HID interrupt-IN endpoint is enabled. When the Windows
-  `usbip2_ude` client is the USB host — over **either** `usbip-vudc` **or**
-  `dummy_hcd` + `usbip-host` — that endpoint never becomes writable: every write
-  fails with `ESHUTDOWN`, even though the device reaches `state=configured`. The
-  identical gadget works when a native Linux host drives it, so this is a
-  property of how the client handles the HID interrupt-IN endpoint, not of the
-  gadget or this harness.
+- **HID keystroke injection is currently live on the dummy_hcd lane.**
+  `test_badusb_hid_keystrokes_execute` and the HID half of
+  `test_composite_both_channels_live` now pass in the lab: the gadget attaches,
+  the VID/PID-matched Keyboard child starts, `/dev/hidgN` becomes writable, and
+  the marker-file keystroke payload executes.
 
-  This is now **diagnosed, not blanket-suppressed.** Both tests run every
-  precondition (attach, enumeration, keyboard-child startup, and for the composite
-  test the storage channel) as hard assertions, then probe the endpoint with a
-  non-blocking write (`hid_type.py --probe`) and `xfail` **only** when the probe
-  confirms the `endpoint_disabled` (all-`ESHUTDOWN`) condition. Any other probe
-  result (`live`, `no_host_polling`, `unknown`) means the endpoint should work,
-  so injection is then *required* to succeed — a fixed client shows up as a normal
-  pass, and a different regression is a real failure rather than a hidden xfail.
-  The keyboard-child gate matters because the USB HID parent can be present with
-  `HidUsb` before the `Keyboard`/`kbdhid` child is started; writes to `/dev/hidgN`
-  can queue in that window without producing keystrokes. HID *enumeration*
-  (allow/deny) remains fully covered by `test_matrix.py`. This is still a
-  candidate driver-side finding to investigate in `usbip2_ude`.
+  The tests still retain the previous diagnostic guard instead of assuming this
+  will stay true on every client build. They run attach/enumeration/keyboard-child
+  preconditions as hard assertions, probe the endpoint with a non-blocking write
+  (`hid_type.py --probe`), and `xfail` only if that probe again confirms
+  `endpoint_disabled` (all `ESHUTDOWN`). That xfail now includes a structured
+  Linux/Windows snapshot: UDC/configfs/HID-node state, USB/IP TCP/socket state,
+  recent Linux kernel messages, Windows HID child status, and `usbip.exe port`.
+  Any other probe result (`live`, `no_host_polling`, `unknown`) means injection
+  is required to succeed. HID enumeration allow/deny remains covered by
+  `test_matrix.py`.

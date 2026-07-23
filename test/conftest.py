@@ -358,6 +358,41 @@ class LinuxServer:
             f"--device {shlex.quote(device)} --probe")
         return json.loads(out.strip().splitlines()[-1])
 
+    def hid_transport_snapshot(self) -> str:
+        """Bounded Linux-side HID/USB-IP diagnostics for efficacy xfails.
+
+        This is intentionally read-only and short: it captures the UDC state,
+        bound HID function metadata, HID character nodes, USB/IP TCP socket
+        state, and recent kernel messages around the moment a HID endpoint probe
+        classifies as disabled.
+        """
+        script = textwrap.dedent(f"""
+            set +e
+            echo "## udc"
+            echo "configured_udc={self.udc}"
+            test -r /sys/class/udc/{shlex.quote(self.udc)}/state && \
+              cat /sys/class/udc/{shlex.quote(self.udc)}/state
+            echo "## gadgets"
+            for g in /sys/kernel/config/usb_gadget/*; do
+              test -d "$g" || continue
+              echo "gadget=$(basename "$g") udc=$(cat "$g/UDC" 2>/dev/null)"
+              find "$g/functions" -maxdepth 2 -type f \
+                \\( -name dev -o -name protocol -o -name subclass -o -name report_length \\) \
+                -print -exec cat {{}} \\; 2>/dev/null
+            done
+            echo "## hid_nodes"
+            ls -l /dev/hidg* 2>/dev/null || true
+            echo "## usbip_tcp"
+            ss -tnp 2>/dev/null | grep ':3240' || true
+            echo "## usbip_port"
+            usbip port 2>&1 || true
+            echo "## recent_kernel"
+            dmesg -T 2>/dev/null | grep -E 'hid|dummy_udc|usbip|usb .*5-1|config' | tail -n 80
+        """)
+        return self.run(
+            f"bash -c {shlex.quote(script)}",
+            check=False, timeout=10.0, label="HID transport snapshot")
+
     def _raw_udc_names(self) -> tuple[str, str]:
         """raw_gadget INIT driver_name/device_name for the UDC it binds to.
 
@@ -591,6 +626,12 @@ class WindowsClient:
 
     def attach(self, busid: str) -> bool:
         return self.attach_result(busid).ok
+
+    def usbip_port_snapshot(self) -> str:
+        r = self._ps_with_timeout(
+            "& $UsbipExe port 2>&1 | Out-String",
+            self.winrm_step_timeout, "usbip port snapshot")
+        return r.std_out.decode(errors="replace").strip()
 
     def pnp_present(self, vid: str, pid: str) -> bool:
         """True only for a present, started node (allow-path usability)."""

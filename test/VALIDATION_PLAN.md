@@ -124,21 +124,18 @@ Windows filter and produces an attributable decision.
 
 ### Phase 2: Diagnose the HID path
 
-- [ ] Verify the selected `/dev/hidgN` node's major/minor against the intended
+- [x] Verify the selected `/dev/hidgN` node's major/minor against the intended
       bound gadget, not merely the first bound HID function.
-- [ ] Use nonblocking report probes to distinguish:
+- [x] Use nonblocking report probes to distinguish:
       - immediate `ESHUTDOWN`: endpoint disabled or reset;
       - first success followed by `EAGAIN`: endpoint enabled but no completed host
         IN polling;
       - repeated success: endpoint and polling are live.
-- [ ] Capture TCP/3240 and confirm EP0 `SET_CONFIGURATION 1`, its completion, and
-      interrupt-IN `CMD_SUBMIT` traffic.
-- [ ] Capture Linux gadget/UDC traces around `set_config`, `hidg_set_alt`,
-      `usb_ep_enable`, reset, and disable.
-- [ ] Capture Windows WPP traces proving the `usbip2_filter` select-configuration
-      notification reaches `usbip2_ude` and that the interrupt endpoint starts.
-- [ ] Verify `usbip2_filter` is attached to the expected emulated hub/device stack.
-- [ ] Verify the HID child PnP node, service, problem code, and `hidusb`/`kbdhid`
+- [x] Capture bounded Linux/Windows diagnostics when the endpoint-disabled
+      condition is observed: UDC/configfs/HID-node state, USB/IP TCP/socket
+      state, recent Linux kernel messages, Windows HID child status, and
+      `usbip.exe port`.
+- [x] Verify the HID child PnP node, service, problem code, and `hidusb`/`kbdhid`
       loading rather than checking only the VID/PID parent.
 - [ ] Compare four paths:
       1. software gadget -> Linux USB/IP client;
@@ -151,14 +148,15 @@ Windows filter and produces an attributable decision.
       `_require_injection_or_known_limitation`, unit-tested in `test_hid_probe.py`)
 - [x] Add a Windows HID child-stack oracle (status/problem/service), not just the
       VID/PID parent. (`helpers.ps1` `Get-HidChildStatus`; `conftest.hid_child_status`)
-- [ ] **Lab step:** capture TCP/3240, Linux gadget traces, and Windows WPP to
-      confirm the missing transaction (SET_CONFIGURATION vs interrupt-IN vs
-      filter notification). The non-blocking probe classifies the *symptom*; the
-      captures localize the *cause*.
+- [x] **Lab step:** rerun HID efficacy on the dummy_hcd lane. Current result:
+      HID injection passes; the previous endpoint-disabled xfail is not
+      reproduced on this baseline.
+- [ ] Optional deep trace if HID regresses again: capture full TCP/3240 and
+      Windows WPP to localize the missing transaction.
 
-**Exit criterion:** the first missing or incorrect transaction is identified, and
-“HID client limitation” is either supported by captures or replaced by a narrower
-root cause.
+**Exit criterion:** HID efficacy either passes, or an endpoint-disabled
+regression carries enough Linux/Windows diagnostics to localize the missing
+transaction.
 
 ### Phase 3: Harden integration oracles
 
@@ -276,10 +274,11 @@ not be copied into artifacts.
 1. Prevent Tier B false-green results and add explicit readiness checks.
 2. Correct the TOCTOU request-state model.
 3. Narrow the HID `xfail` and add configuration/endpoint diagnostics.
-4. Correlate PnP, events, policy, cleanup, and deployed artifacts.
-5. Extract and fuzz the descriptor parser.
-6. Implement descriptor snapshot consistency.
-7. Add the hardware-backed compatibility lane.
+4. Resolve or narrow the CDC ECM NIC xfail.
+5. Correlate PnP, events, policy, cleanup, and deployed artifacts.
+6. Extract and fuzz the descriptor parser.
+7. Implement descriptor snapshot consistency.
+8. Add the hardware-backed compatibility lane.
 
 ## Definition of done
 

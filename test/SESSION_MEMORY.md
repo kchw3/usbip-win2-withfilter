@@ -40,7 +40,7 @@ Last updated: 2026-07-23
     snapshot fetches before switching to the malicious descriptor.
 - Full suite with efficacy:
   - command: `pytest -q test --run-efficacy -ra --maxfail=1`
-  - result: `80 passed, 8 skipped, 1 xfailed in 688.75s (0:11:28)`
+  - result: `80 passed, 8 skipped, 1 xfailed in 706.33s (0:11:46)`
   - no failures or errors.
 
 ## Expected skips and xfail
@@ -61,7 +61,10 @@ Last updated: 2026-07-23
 - The Python harness updates `linux.busid` after export so Windows attach and rejection-event correlation use the actual busid.
 - Teardown receives `BUSID=...` before unbinding and removing the configfs gadget.
 - `vendor_ff` allow-path matrix checks require successful attach plus matching PnP exposure, not `Status=OK`, because SourceSink has no Windows in-box function driver.
-- HID and CDC ECM efficacy limitations are precise xfails only after hard preconditions pass.
+- HID efficacy currently passes on the dummy_hcd lane. If it regresses to the
+  previous endpoint-disabled condition, the xfail includes Linux/Windows
+  transport diagnostics. CDC ECM remains a precise xfail only after hard
+  preconditions pass.
 - Raw Gadget SET_CONFIGURATION handling uses `USB_RAW_IOCTL_CONFIGURE` followed
   by zero-length `EP0_READ`, matching OUT/no-data control completion. Using
   `EP0_WRITE` left dummy_hcd stuck at `can't set config #1, error -110` and
@@ -70,8 +73,9 @@ Last updated: 2026-07-23
 ## Next work
 
 See `test/NEXT_STEPS_PLAN.md`. Current implementation target completed: Tier B
-Raw Gadget robustness tests are active and validated. Next target: diagnose the
-HID efficacy xfail with TCP/3240, Linux gadget/UDC traces, and Windows WPP.
+Raw Gadget robustness tests are active and validated, and HID efficacy currently
+passes with diagnostic fallback for endpoint-disabled regressions. Next target:
+resolve or narrow the CDC ECM NIC xfail.
 
 ## Config knobs
 

@@ -13,6 +13,7 @@ Run: pytest test/test_attack_efficacy.py -v
 
 from __future__ import annotations
 
+import json
 import time
 import uuid
 
@@ -60,9 +61,17 @@ def _require_injection_or_known_limitation(linux, win, token: str, hid_pid: str)
     probe = linux.probe_hid_endpoint()
     classification = probe.get("classification")
     if classification == "endpoint_disabled":
+        diagnostic = {
+            "probe": probe,
+            "hid_child_status": win.hid_child_status(VID, hid_pid),
+            "windows_usbip_port": win.usbip_port_snapshot(),
+            "linux_transport": linux.hid_transport_snapshot(),
+        }
         pytest.xfail(
             "confirmed client limitation: HID interrupt-IN endpoint never "
-            f"enabled (probe={probe}); see VALIDATION_PLAN.md phase 2")
+            "enabled; diagnostic snapshot="
+            f"{json.dumps(diagnostic, sort_keys=True)}; "
+            "see VALIDATION_PLAN.md phase 2")
 
     # The endpoint is (or should be) usable; injection must therefore succeed.
     linux.fire_hid_marker(token)

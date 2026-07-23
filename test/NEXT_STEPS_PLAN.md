@@ -31,7 +31,9 @@ Last updated: 2026-07-23
    - prove killed producer, suppressed export, wrong busid, and omitted crafted response all fail red;
    - prove one benign Raw Gadget profile enumerates through the same UDC/USB-IP path.
 2. Completed: convert Tier B robustness tests from unconditional skips to gated Raw Gadget security rows now that the canary path is proven.
-3. Diagnose HID efficacy xfail with TCP/3240, Linux gadget/UDC traces, and Windows WPP to identify the first missing transaction.
+3. Completed: diagnose HID efficacy path. The dummy_hcd baseline now passes HID
+   keystroke injection; if endpoint-disabled regresses, the xfail includes a
+   Linux/Windows transport snapshot.
 4. Resolve or narrow the CDC ECM NIC xfail, preferably with an alternate RNDIS or hardware-backed NIC path if this Windows image lacks a CDC ECM network driver.
 5. Harden remaining oracles:
    - assert rejection reason/class/active whitelist once the event message contract is pinned;

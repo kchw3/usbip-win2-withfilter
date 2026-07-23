@@ -200,9 +200,9 @@ policy/deployment cannot satisfy a test oracle.
       and a 50k-iteration property fuzz (allow-all count invariant; allow-none
       never accepts). Note: this also fixed a real driver gap -- the old walk
       allowed zero-interface and lying-count configs (vacuous pass).
-- [ ] Extend fuzz coverage to multiple configurations/indexes, IAD and
-      class-specific descriptors, excessive counts/lengths, and unknown
-      subclass/protocol/match-flag combinations.
+- [x] Extend fuzz coverage to IAD and class-specific descriptors, excessive
+      counts/lengths, long unknown descriptors, non-contiguous interface numbers,
+      and subclass/protocol match predicates.
 - [ ] Add registry/policy corruption, limits, concurrent update/attach, reconnect,
       and transport-interruption tests (`load`/`store` in `device_filter.cpp`).
 

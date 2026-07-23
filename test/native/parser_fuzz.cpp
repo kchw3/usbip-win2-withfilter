@@ -45,6 +45,25 @@ std::vector<std::uint8_t> endpoint(std::uint8_t length = 7) {
     return out;
 }
 
+std::vector<std::uint8_t> iad() {
+    return {8, 0x0B, 0, 2, 0x02, 0x02, 0x01, 0};
+}
+
+std::vector<std::uint8_t> class_specific(std::uint8_t length = 5) {
+    std::vector<std::uint8_t> out = {length, 0x24, 0x00, 0x10, 0x01};
+    out.resize(length);
+    return out;
+}
+
+std::vector<std::uint8_t> unknown_descriptor(std::uint8_t length, std::uint8_t type = 0x30) {
+    std::vector<std::uint8_t> out;
+    out.reserve(length);
+    out.push_back(length);
+    out.push_back(type);
+    for (std::uint8_t i = 2; i < length; ++i) out.push_back(i);
+    return out;
+}
+
 // Build a CONFIGURATION descriptor. num_interfaces/total_override let tests lie.
 std::vector<std::uint8_t> config(const std::vector<std::vector<std::uint8_t>> &ifaces,
                                  int num_interfaces = -1, int total_override = -1) {
@@ -147,6 +166,68 @@ void unit_cases() {
     check(eval(config({iface(0, 0, 0x03), iface(0, 1, 0x03)},
                       /*num_interfaces=*/1), hid) == descriptor_error::none,
           "alternate settings counted once");
+
+    // Non-contiguous interface numbers are legal; bNumInterfaces is a count of
+    // distinct interface numbers, not max(interface_number)+1.
+    check(eval(config({iface(2, 0, 0x03), iface(7, 0, 0x08)},
+                      /*num_interfaces=*/2), ms_hid) == descriptor_error::none,
+          "non-contiguous interface numbers accepted");
+
+    // IAD and class-specific descriptors are not themselves class tokens; they
+    // must be skipped safely while adjacent interfaces still drive policy.
+    check(eval(config({iad(), iface(0, 0, 0x02, 0x06, 0x00),
+                       class_specific(), endpoint(),
+                       iface(1, 0, 0x0A, 0x00, 0x00), endpoint()},
+                      /*num_interfaces=*/2), {0x02, 0x0A}) ==
+              descriptor_error::none,
+          "IAD/class-specific CDC descriptors skipped while interfaces allowed");
+    check(eval(config({iad(), iface(0, 0, 0x02, 0x06, 0x00),
+                       class_specific(), iface(1, 0, 0x03)},
+                      /*num_interfaces=*/2), {0x02}) ==
+              descriptor_error::interface_not_allowed,
+          "IAD does not hide later disallowed interface");
+
+    // Subclass/protocol-aware matching: same class, wrong protocol must deny.
+    {
+        auto c = config({iface(0, 0, 0x08, 0x06, 0x50)});
+        descriptor_bytes view{c.data(), c.size()};
+        auto ok = evaluate_configuration(view, [](const interface_class &i) {
+            return i.cls == 0x08 && i.subcls == 0x06 && i.protocol == 0x50;
+        });
+        check(ok.error == descriptor_error::none,
+              "subclass/protocol predicate accepts exact mass-storage tuple");
+        auto bad = evaluate_configuration(view, [](const interface_class &i) {
+            return i.cls == 0x08 && i.subcls == 0x06 && i.protocol == 0x62;
+        });
+        check(bad.error == descriptor_error::interface_not_allowed &&
+                  bad.offending_interface.cls == 0x08 &&
+                  bad.offending_interface.subcls == 0x06 &&
+                  bad.offending_interface.protocol == 0x50,
+              "subclass/protocol predicate denies and reports offending tuple");
+    }
+
+    // Maximum bNumInterfaces value is representable and should not
+    // overflow the seen_interfaces[256] table.
+    {
+        std::vector<std::vector<std::uint8_t>> many;
+        for (int i = 0; i < 255; ++i) {
+            many.push_back(iface(static_cast<std::uint8_t>(i), 0, 0x03));
+        }
+        check(eval(config(many, /*num_interfaces=*/255), hid) ==
+                  descriptor_error::none,
+              "255 distinct interfaces accepted");
+    }
+
+    // A descriptor can be long and unknown; it is safe if it is fully contained.
+    check(eval(config({iface(0, 0, 0x03), unknown_descriptor(255)},
+                      /*num_interfaces=*/1), hid) == descriptor_error::none,
+          "oversized unknown descriptor skipped when contained");
+
+    // But inflated wTotalLength claims must fail even when the real buffer is
+    // otherwise well-formed.
+    check(eval(config({iface(0, 0, 0x03)}, -1, /*total_override=*/65535), hid) ==
+              descriptor_error::total_length_mismatch,
+          "inflated wTotalLength denied");
 
     // Header too short / wrong type.
     {

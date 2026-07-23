@@ -40,7 +40,7 @@ Last updated: 2026-07-23
     snapshot fetches before switching to the malicious descriptor.
 - Full suite with efficacy:
   - command: `pytest -q test --run-efficacy -ra --maxfail=1`
-  - result: `103 passed, 8 skipped in 1107.24s (0:18:27)`
+  - result: `103 passed, 8 skipped in 1090.88s (0:18:10)`
   - no failures, errors, or xfails.
 
 ## Expected skips and xfail
@@ -76,6 +76,9 @@ Last updated: 2026-07-23
   `allow_network_vendor`. RNDIS is modeled as `network` because the production
   parser/filter sees the configfs RNDIS function as network-class, not
   vendor-specific.
+- Native parser fuzz coverage now includes IAD/class-specific descriptors,
+  subclass/protocol predicates, non-contiguous and high-count interface numbers,
+  long unknown descriptors, and inflated `wTotalLength` cases.
 - Raw Gadget SET_CONFIGURATION handling uses `USB_RAW_IOCTL_CONFIGURE` followed
   by zero-length `EP0_READ`, matching OUT/no-data control completion. Using
   `EP0_WRITE` left dummy_hcd stuck at `can't set config #1, error -110` and
@@ -87,8 +90,9 @@ See `test/NEXT_STEPS_PLAN.md`. Current implementation target completed: Tier B
 Raw Gadget robustness tests are active and validated, and HID efficacy currently
 passes with diagnostic fallback for endpoint-disabled regressions. Rogue-NIC
 efficacy now passes via the OS-descriptor-backed RNDIS lane. Rejection-event
-oracle hardening and network/vendor allow expansion are implemented. Next target:
-parser fuzz coverage per `NEXT_STEPS_PLAN.md`.
+oracle hardening, network/vendor allow expansion, and parser fuzz expansion are
+implemented. Next target: WDK `/WX` descriptor snapshot validation or the
+hardware-backed efficacy lane per `NEXT_STEPS_PLAN.md`.
 
 ## Config knobs
 

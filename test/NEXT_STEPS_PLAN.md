@@ -50,7 +50,9 @@ Last updated: 2026-07-23
      `allow_vendor`, `allow_network_vendor`) and aligned the RNDIS decision
      model with the production parser's network-class view.
    - keep efficacy checks VID/PID-correlated.
-7. Extend native parser fuzz coverage for multi-configuration/indexed descriptors, IAD, class-specific descriptors, excessive counts/lengths, and subclass/protocol edge cases.
+7. Completed: extend native parser fuzz coverage for IAD/class-specific
+   descriptors, non-contiguous and high-count interface numbers, long unknown
+   descriptors, inflated lengths, and subclass/protocol predicates.
 8. Validate descriptor snapshots with a WDK `/WX` build and lab run.
 9. Add an opt-in hardware-backed efficacy lane through `usbip-host`.
 

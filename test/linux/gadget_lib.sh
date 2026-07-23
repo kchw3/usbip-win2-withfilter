@@ -159,6 +159,23 @@ g_add_rndis() {
   ln -sf "${G}/functions/rndis.0" "${G}/configs/c.${cfg}/"
 }
 
+g_enable_rndis_ms_os_desc() {
+  local cfg="$1"
+  # Windows does not necessarily bind an in-box network driver to a plain
+  # configfs RNDIS function. Microsoft OS 1.0 descriptors advertise the
+  # interface as RNDIS/5162001 so Windows can match its RNDIS class driver
+  # without a vendor INF.
+  mkdir -p "${G}/os_desc"
+  echo 1        > "${G}/os_desc/use"
+  echo 0xcd     > "${G}/os_desc/b_vendor_code"
+  echo MSFT100  > "${G}/os_desc/qw_sign"
+  mkdir -p "${G}/functions/rndis.0/os_desc/interface.rndis"
+  echo RNDIS    > "${G}/functions/rndis.0/os_desc/interface.rndis/compatible_id"
+  echo 5162001  > "${G}/functions/rndis.0/os_desc/interface.rndis/sub_compatible_id"
+  rm -f "${G}/os_desc/c.${cfg}"
+  ln -s "${G}/configs/c.${cfg}" "${G}/os_desc/c.${cfg}"
+}
+
 # g_add_vendor <cfg> : vendor-specific interface (class 0xFF) via the gadget
 # zero source/sink function. Models DFU / RNDIS / custom BadUSB hiding behind 0xFF.
 g_add_vendor() {
@@ -308,9 +325,18 @@ g_teardown() {
     rmdir "${cfg}"/strings/* 2>/dev/null || true
     rmdir "${cfg}" 2>/dev/null || true
   done
+  # remove Microsoft OS descriptor config links and directory
+  if [[ -d "${G}/os_desc" ]]; then
+    find "${G}/os_desc" -maxdepth 1 -type l -exec rm -f {} +
+    rmdir "${G}/os_desc" 2>/dev/null || true
+  fi
   # remove functions
   for fn in "${G}"/functions/*/; do
     [[ -d "${fn}" ]] || continue
+    if [[ -d "${fn}/os_desc" ]]; then
+      find "${fn}/os_desc" -mindepth 1 -maxdepth 1 -type d -exec rmdir {} \; 2>/dev/null || true
+      rmdir "${fn}/os_desc" 2>/dev/null || true
+    fi
     rmdir "${fn}" 2>/dev/null || true
   done
   rmdir "${G}"/strings/* 2>/dev/null || true

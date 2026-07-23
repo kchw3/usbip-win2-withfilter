@@ -10,7 +10,7 @@ Last updated: 2026-07-23
   - Connectivity: `13 passed, 1 skipped`.
   - Full Tier A matrix: `35 passed`.
   - Full suite: `72 passed, 9 skipped`.
-  - Full suite with efficacy: `80 passed, 8 skipped, 1 xfailed`.
+  - Full suite with efficacy: `81 passed, 8 skipped`.
   - Tier B Raw Gadget canaries: `7 passed`.
   - Tier B Raw Gadget robustness: `4 passed`.
 - Phase 0 Linux attribution is implemented: connectivity records kernel, USB/IP tool, module, configured UDC/busid, backend, and daemon mode.
@@ -22,9 +22,8 @@ Last updated: 2026-07-23
   - vUDC device-mode connectivity check skips under `dummy_udc.0`.
   - Tier B Raw Gadget canaries skip by default unless `--run-tierb-canaries` is
     supplied.
-  - `test_rogue_nic_appears` xfails because CDC ECM and RNDIS both attach and
-    expose VID/PID, but this Windows image fails both MI_00 function nodes with
-    Problem 28 and does not start a VID/PID-matched `Net` child.
+  - No expected xfails on the dummy_hcd baseline after `rndis_os_nic` resolved
+    the rogue-NIC negative-control lane.
 
 ## Ordered implementation plan
 
@@ -39,8 +38,9 @@ Last updated: 2026-07-23
 4. Completed: narrow the CDC ECM NIC xfail by trying both CDC ECM and RNDIS and
    recording per-shape PnP/driver diagnostics. Both shapes attach but fail
    Windows network driver binding on this image.
-5. Add a hardware-backed or OS-descriptor-backed network efficacy lane so the
-   rogue-NIC negative control can prove a live `Net` child on this client.
+5. Completed: add an OS-descriptor-backed RNDIS network efficacy lane
+   (`rndis_os_nic`) so the rogue-NIC negative control proves a live
+   VID/PID-matched `Net` child on this client.
 6. Harden remaining oracles:
    - assert rejection reason/class/active whitelist once the event message contract is pinned;
    - expand network/vendor allow cases;

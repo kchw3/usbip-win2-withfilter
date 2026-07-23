@@ -23,6 +23,13 @@ from devices import DEVICES, VID
 
 pytestmark = pytest.mark.efficacy
 
+NETWORK_EFFICACY_DEVICES = {
+    "cdc_nic": DEVICES["cdc_nic"],
+    "rndis_nic": DEVICES["rndis_nic"],
+    "rndis_os_nic": DEVICES["rndis_nic"].__class__(
+        "rndis_os_nic", "03EF", frozenset({"network", "vendor"})),
+}
+
 
 def _token() -> str:
     return uuid.uuid4().hex[:8]
@@ -158,16 +165,16 @@ def test_composite_both_channels_live(linux, win):
 def test_rogue_nic_appears(linux, win):
     """A rogue software USB NIC presents a VID/PID-matched network child.
 
-    Try CDC ECM first and RNDIS second. Windows client images vary: some do not
-    include/start a CDC ECM class driver, and RNDIS may require additional OS
-    descriptor matching. The security claim needs at least one software rogue
-    NIC shape to become a real `Net` child with the filter disabled; if neither
-    does, xfail with per-shape PnP/driver diagnostics.
+    Try CDC ECM, plain RNDIS, then RNDIS with Microsoft OS descriptors. Windows
+    client images vary: some do not include/start a CDC ECM class driver, and
+    RNDIS may require additional OS descriptor matching. The security claim
+    needs at least one software rogue NIC shape to become a real `Net` child with
+    the filter disabled; if none does, xfail with per-shape PnP/driver
+    diagnostics.
     """
     diagnostics = []
 
-    for key in ("cdc_nic", "rndis_nic"):
-        dev = DEVICES[key]
+    for key, dev in NETWORK_EFFICACY_DEVICES.items():
         win.set_policy(disable=True)
         try:
             linux.build_gadget(dev.gadget, vid=f"0x{VID}", pid=f"0x{dev.pid}")
@@ -195,6 +202,7 @@ def test_rogue_nic_appears(linux, win):
             win.cleanup()
 
     pytest.xfail(
-        "confirmed client limitation: CDC ECM and RNDIS gadgets attach and "
-        "expose VID/PID, but Windows did not start a VID/PID-matched Net child; "
+        "confirmed client limitation: CDC ECM, RNDIS, and RNDIS+MS-OS-descriptor "
+        "gadgets attach and expose VID/PID, but Windows did not start a "
+        "VID/PID-matched Net child; "
         f"diagnostics={json.dumps(diagnostics, sort_keys=True)}")

@@ -104,6 +104,10 @@ class _FakeGadget(rg.RawGadget):
         self.actions.append(("write", bytes(data)))
         return len(data)
 
+    def ep0_read(self, length=0):
+        self.actions.append(("read", length))
+        return length
+
     def fetch_event(self):
         if not self._events:
             raise _StopServe
@@ -134,12 +138,14 @@ def test_in_reply_is_clipped_to_wlength():
 
 
 def test_set_configuration_default_configures_and_acks():
-    # OUT SET_CONFIGURATION, profile returns None -> serve must configure + ACK.
+    # OUT SET_CONFIGURATION, profile returns None -> serve must configure and
+    # complete the OUT/no-data status stage via EP0_READ.
     events = [_ctrl(0x00, rg.SET_CONFIGURATION, wv=1)]
     gadget = _FakeGadget(events)
     _serve(gadget, lambda req: None)
     assert ("configure",) in gadget.actions
-    assert ("write", b"") in gadget.actions
+    assert ("read", 0) in gadget.actions
+    assert ("write", b"") not in gadget.actions
     assert ("stall",) not in gadget.actions
 
 

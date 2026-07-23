@@ -35,15 +35,23 @@ def pytest_addoption(parser):
         help="run the destructive efficacy (negative-control) tests that execute "
              "real payloads on the Windows client (filter OFF).",
     )
+    parser.addoption(
+        "--run-tierb-canaries", action="store_true", default=False,
+        help="run Raw Gadget Tier B lab bring-up canaries.",
+    )
 
 
 def pytest_collection_modifyitems(config, items):
-    if config.getoption("--run-efficacy"):
-        return
-    skip = pytest.mark.skip(reason="efficacy tests are opt-in; pass --run-efficacy")
+    skip_efficacy = pytest.mark.skip(
+        reason="efficacy tests are opt-in; pass --run-efficacy")
+    skip_canary = pytest.mark.skip(
+        reason="Tier B Raw Gadget canaries are opt-in; pass --run-tierb-canaries")
     for item in items:
-        if "efficacy" in item.keywords:
-            item.add_marker(skip)
+        if "efficacy" in item.keywords and not config.getoption("--run-efficacy"):
+            item.add_marker(skip_efficacy)
+        if ("tierb_canary" in item.keywords and
+                not config.getoption("--run-tierb-canaries")):
+            item.add_marker(skip_canary)
 
 
 def _load_config() -> configparser.ConfigParser | None:
@@ -368,6 +376,7 @@ class LinuxServer:
     def start_raw_gadget(
         self, profile: str, *, expected_vid: str, expected_pid: str,
         env: dict[str, str] | None = None, timeout: float = 20.0,
+        export: bool = True,
     ) -> "RawGadgetRun":
         """Launch a Tier B raw_gadget profile and return only once it is proven
         live and exported.
@@ -399,11 +408,13 @@ class LinuxServer:
                            vid=expected_vid, product_id=expected_pid,
                            busid=self.configured_busid)
         self._await_raw_ready(run, timeout)
-        self._export_verified(expected_vid, expected_pid, timeout)
-        return RawGadgetRun(
-            run_id=run.run_id, profile=run.profile, pid=run.pid,
-            run_dir=run.run_dir, vid=run.vid, product_id=run.product_id,
-            busid=self.busid)
+        if export:
+            self._export_verified(expected_vid, expected_pid, timeout)
+            return RawGadgetRun(
+                run_id=run.run_id, profile=run.profile, pid=run.pid,
+                run_dir=run.run_dir, vid=run.vid, product_id=run.product_id,
+                busid=self.busid)
+        return run
 
     def _await_raw_ready(self, run: "RawGadgetRun", timeout: float) -> None:
         deadline = time.time() + timeout
@@ -432,20 +443,33 @@ class LinuxServer:
         raise RuntimeError(f"raw_gadget {run.profile!r} not ready in {timeout:g}s; "
                            f"last status: {last}")
 
-    def _export_verified(self, vid: str, pid: str, timeout: float) -> None:
-        self._export_gadget(
-            label=f"export raw gadget busid={self.configured_busid}",
-            vid=f"0x{vid}", pid=f"0x{pid}")
+    def _verify_export_visible(
+        self, vid: str, pid: str, timeout: float, *, busid: str | None = None,
+    ) -> None:
+        expected_busid = self.busid if busid is None else busid
         want = f"{vid.lower()}:{pid.lower()}"
         deadline = time.time() + timeout
         listing = ""
         while time.time() < deadline:
             listing = self.run("usbip list -r 127.0.0.1 2>/dev/null || true", check=False)
-            if self.busid in listing and want in listing.lower():
+            if expected_busid in listing and want in listing.lower():
                 return
             time.sleep(1)
         raise RuntimeError(
-            f"exported device not visible with busid {self.busid} and {want}:\n{listing}")
+            f"exported device not visible with busid {expected_busid} and {want}:\n"
+            f"{listing}")
+
+    def verify_raw_export_visible(
+        self, vid: str, pid: str, *, timeout: float = 5.0,
+        busid: str | None = None,
+    ) -> None:
+        self._verify_export_visible(vid, pid, timeout, busid=busid)
+
+    def _export_verified(self, vid: str, pid: str, timeout: float) -> None:
+        self._export_gadget(
+            label=f"export raw gadget busid={self.configured_busid}",
+            vid=f"0x{vid}", pid=f"0x{pid}")
+        self._verify_export_visible(vid, pid, timeout)
 
     def read_raw_transcript(self, run: "RawGadgetRun") -> list[dict]:
         raw = self.run(f"cat {shlex.quote(run.run_dir)}/transcript.jsonl 2>/dev/null || true",
@@ -456,6 +480,12 @@ class LinuxServer:
         log = self.run(f"cat {shlex.quote(run.run_dir)}/stdout.log "
                        f"{shlex.quote(run.run_dir)}/stderr.log 2>/dev/null || true",
                        check=False)
+        if run.busid and run.busid != "auto":
+            self.run(
+                f"UDC_NAME={shlex.quote(self.udc)} "
+                f"bash -c 'source {shlex.quote(self.test_dir)}/gadget_lib.sh; "
+                f"usbip_unexport {shlex.quote(run.busid)}'",
+                check=False)
         self.run(f"kill {run.pid} 2>/dev/null || true", check=False)
         return log
 

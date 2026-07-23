@@ -1,6 +1,6 @@
 # USB/IP Filter Test Session Memory
 
-Last updated: 2026-07-22
+Last updated: 2026-07-23
 
 ## Current state
 
@@ -26,9 +26,15 @@ Last updated: 2026-07-22
   - modules loaded: `libcomposite`, `dummy_hcd`, `usbip_host`, `usbip_vudc`, `raw_gadget`
 - Full Tier A matrix: `35 passed in 548.17s (0:09:08)`.
 - Full suite without efficacy: `72 passed, 9 skipped in 523.97s (0:08:43)`.
+- Tier B Raw Gadget canaries:
+  - command: `pytest -q test/test_tierb_canaries.py --run-tierb-canaries --maxfail=1`
+  - result: `7 passed in 24.22s`
+  - proves UDC naming, dead producer detection, wrong UDC failure, suppressed
+    export failure, wrong busid failure, omitted config-response detection, and
+    benign Raw Gadget attach/PnP exposure through Windows.
 - Full suite with efficacy:
   - command: `pytest -q test --run-efficacy -ra --maxfail=1`
-  - result: `76 passed, 5 skipped, 1 xfailed in 667.41s (0:11:07)`
+  - result: `76 passed, 12 skipped, 1 xfailed in 668.42s (0:11:08)`
   - no failures or errors.
 
 ## Expected skips and xfail
@@ -40,7 +46,11 @@ Last updated: 2026-07-22
   - `test/test_robustness.py::test_malformed_descriptors_fail_closed[lying_count]`
   - `test/test_robustness.py::test_malformed_descriptors_fail_closed[bad_total_length]`
   - `test/test_robustness.py::test_descriptor_toctou_no_bypass`
-- Tier B robustness skips remain intentional until Raw Gadget lab bring-up proves the stimulus path and failure canaries.
+- Tier B canaries:
+  - `test/test_tierb_canaries.py` has 7 tests skipped by default unless
+    `--run-tierb-canaries` is supplied.
+- Tier B robustness skips remain intentional until the robustness rows are
+  converted from unconditional skips to the proven Raw Gadget stimulus path.
 - Xfail:
   - `test/test_attack_efficacy.py::test_rogue_nic_appears`
   - attach and VID/PID PnP exposure succeed for CDC ECM, but this Windows client does not start a VID/PID-matched `Net` child.
@@ -52,10 +62,17 @@ Last updated: 2026-07-22
 - Teardown receives `BUSID=...` before unbinding and removing the configfs gadget.
 - `vendor_ff` allow-path matrix checks require successful attach plus matching PnP exposure, not `Status=OK`, because SourceSink has no Windows in-box function driver.
 - HID and CDC ECM efficacy limitations are precise xfails only after hard preconditions pass.
+- Raw Gadget SET_CONFIGURATION handling uses `USB_RAW_IOCTL_CONFIGURE` followed
+  by zero-length `EP0_READ`, matching OUT/no-data control completion. Using
+  `EP0_WRITE` left dummy_hcd stuck at `can't set config #1, error -110` and
+  caused usbip-host/Windows descriptor fetch failures.
 
 ## Next work
 
-See `test/NEXT_STEPS_PLAN.md`. Current implementation target completed: Linux kernel / USB-IP / UDC / backend manifest output is now recorded by connectivity. Next target: Tier B Raw Gadget bring-up canaries before unskipping robustness tests.
+See `test/NEXT_STEPS_PLAN.md`. Current implementation target completed: Tier B
+Raw Gadget bring-up canaries are implemented and validated. Next target: convert
+Tier B robustness tests from unconditional skips to gated Raw Gadget security
+rows.
 
 ## Config knobs
 

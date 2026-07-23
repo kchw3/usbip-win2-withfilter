@@ -267,6 +267,10 @@ class RawGadget:
         buf = pack_ep_io(data)
         return self._ioctl(USB_RAW_IOCTL_EP0_WRITE, buf)
 
+    def ep0_read(self, length: int = 0) -> int:
+        buf = pack_ep_io(bytes(length))
+        return self._ioctl(USB_RAW_IOCTL_EP0_READ, buf)
+
     def fetch_event(self) -> tuple[int, "ControlRequest | None"]:
         buf = pack_event_buffer(self.event_data_capacity)
         self._ioctl(USB_RAW_IOCTL_EVENT_FETCH, buf)
@@ -330,12 +334,17 @@ class RawGadget:
 
         if reply is None and not req.is_in and req.bRequest == SET_CONFIGURATION:
             # Default handling so the gadget reaches the configured state.
+            #
+            # SET_CONFIGURATION is an OUT/no-data control request, so the
+            # completion primitive is EP0_READ, not EP0_WRITE. The latter
+            # fails with EBUSY on the lab dummy_hcd/raw_gadget stack and leaves
+            # the host-side configuration attempt to time out.
             self.configure()
-            transferred = self.ep0_write(b"")
+            transferred = self.ep0_read(0)
             tx.record(
                 "control",
                 request=self._req_dict(req),
-                response={"action": "configure+ack", "transferred": transferred},
+                response={"action": "configure", "transferred": transferred},
             )
             return
 

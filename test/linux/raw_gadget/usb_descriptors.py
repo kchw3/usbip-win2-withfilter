@@ -50,6 +50,22 @@ def device_descriptor(
     )
 
 
+def string_descriptor(index: int) -> bytes:
+    """Minimal string descriptor table for Raw Gadget canaries/profiles."""
+    if index == 0:
+        return b"\x04" + bytes([DT_STRING]) + b"\x09\x04"  # en-US
+    values = {
+        1: "usbip-test",
+        2: "raw-gadget-test",
+        3: "0001",
+    }
+    text = values.get(index)
+    if text is None:
+        return b""
+    body = text.encode("utf-16le")
+    return bytes([2 + len(body), DT_STRING]) + body
+
+
 def interface_descriptor(
     *,
     number: int,
@@ -70,6 +86,24 @@ def interface_descriptor(
         b_interface_subclass,
         b_interface_protocol,
         0,             # iInterface
+    )
+
+
+def endpoint_descriptor(
+    *,
+    address: int,
+    attributes: int = 0x02,  # bulk
+    max_packet_size: int = 512,
+    interval: int = 0,
+) -> bytes:
+    return struct.pack(
+        "<BBBBHB",
+        7,             # bLength
+        DT_ENDPOINT,
+        address,
+        attributes,
+        max_packet_size,
+        interval,
     )
 
 
@@ -108,8 +142,11 @@ def config_descriptor(
 
 def benign_mass_storage_config() -> bytes:
     return config_descriptor([
-        interface_descriptor(number=0, b_interface_class=CLASS_MASS_STORAGE,
+        interface_descriptor(number=0, num_endpoints=2,
+                             b_interface_class=CLASS_MASS_STORAGE,
                              b_interface_subclass=0x06, b_interface_protocol=0x50),
+        endpoint_descriptor(address=0x81),
+        endpoint_descriptor(address=0x02),
     ])
 
 

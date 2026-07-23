@@ -121,7 +121,7 @@ pytest test/ -v
 ```
 
 Current validated baseline for Tier A is `dummy_hcd` with `[linux] udc_name =
-dummy_udc.0` and `busid = auto`. On 2026-07-22, connectivity passed
+dummy_udc.0` and `busid = auto`. On 2026-07-23, connectivity passed
 (`13 passed, 1 skipped`), the full Tier A matrix passed (`35 passed`), and the
 standard full suite passed (`72 passed, 9 skipped`) before Linux manifest
 recording was added. The skipped tests were the expected vUDC-only connectivity
@@ -129,16 +129,27 @@ check, Tier B Raw Gadget lab-bring-up checks, and efficacy tests when
 `--run-efficacy` was not supplied.
 
 With efficacy enabled on the same dummy_hcd baseline, the full suite passed with
-no failures or errors: `76 passed, 5 skipped, 1 xfailed in 667.41s`. The five
-skips were the vUDC-only connectivity check and the Tier B Raw Gadget tests
-pending lab bring-up. The single xfail was `test_rogue_nic_appears`: the CDC ECM
-gadget attached and exposed the expected VID/PID, but this Windows client did
-not start a VID/PID-matched `Net` child.
+no failures or errors: `76 passed, 12 skipped, 1 xfailed in 668.42s`. The
+skips were the vUDC-only connectivity check, the Tier B robustness rows pending
+conversion to the proven Raw Gadget path, and the opt-in Tier B canaries when
+`--run-tierb-canaries` was not supplied. The single xfail was
+`test_rogue_nic_appears`: the CDC ECM gadget attached and exposed the expected
+VID/PID, but this Windows client did not start a VID/PID-matched `Net` child.
 
 Connectivity now also records a Linux attribution manifest. The current lab
 reports kernel `6.19.14`, `usbip-utils 2.0`, backend `host-auto-busid`,
 `usbipd -D`, and loaded `libcomposite`, `dummy_hcd`, `usbip_host`,
 `usbip_vudc`, and `raw_gadget` modules.
+
+Tier B Raw Gadget bring-up canaries are opt-in and validate the stimulus path
+before malformed-descriptor/TOCTOU rows are promoted into security gates:
+```
+pytest test/test_tierb_canaries.py -v --run-tierb-canaries
+```
+The current lab result is `7 passed in 24.22s`. These canaries prove the
+raw-gadget UDC names, dead producer detection, wrong UDC failure, suppressed
+export failure, wrong busid failure, omitted configuration-response detection,
+and one benign Raw Gadget attach/PnP exposure through Windows.
 
 For the ordered follow-up plan, see [NEXT_STEPS_PLAN.md](NEXT_STEPS_PLAN.md).
 
@@ -238,6 +249,15 @@ and PnP exposure as hard preconditions, then xfails only for the specific
 no-network-child condition. This preserves the filter matrix coverage for the
 network class while avoiding a false infrastructure failure in the opt-in
 negative control.
+
+**Raw Gadget attach fails with `device descriptor fetch failed` after export.**
+Check the raw-gadget transcript and Linux dmesg before treating this as a
+filter decision. One concrete lab failure was caused by completing
+SET_CONFIGURATION with a zero-length `EP0_WRITE`; dummy_hcd timed out with
+`can't set config #1, error -110`, then `usbip-host` saw EP0 stalls during
+Windows attach. The Raw Gadget helper now uses `USB_RAW_IOCTL_CONFIGURE`
+followed by zero-length `EP0_READ`, which matches OUT/no-data control request
+completion and allows the benign Raw Gadget canary to attach through Windows.
 
 ## What each layer asserts
 

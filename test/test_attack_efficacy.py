@@ -156,19 +156,45 @@ def test_composite_both_channels_live(linux, win):
 
 
 def test_rogue_nic_appears(linux, win):
-    """Rogue USB NIC actually presents a VID/PID-matched network child."""
-    dev = DEVICES["cdc_nic"]
-    win.set_policy(disable=True)
+    """A rogue software USB NIC presents a VID/PID-matched network child.
 
-    linux.build_gadget(dev.gadget, vid=f"0x{VID}", pid=f"0x{dev.pid}")
-    assert win.attach(linux.busid), "device should attach with filter disabled"
-    assert _wait(lambda: win.pnp_exposure(VID, dev.pid)), (
-        f"device attached but Windows never exposed VID_{VID}&PID_{dev.pid}; "
-        "cannot diagnose network child readiness")
+    Try CDC ECM first and RNDIS second. Windows client images vary: some do not
+    include/start a CDC ECM class driver, and RNDIS may require additional OS
+    descriptor matching. The security claim needs at least one software rogue
+    NIC shape to become a real `Net` child with the filter disabled; if neither
+    does, xfail with per-shape PnP/driver diagnostics.
+    """
+    diagnostics = []
 
-    if not _wait(lambda: win.net_child_ready(VID, dev.pid)):
-        pytest.xfail(
-            "confirmed client limitation: CDC ECM gadget attaches and exposes "
-            f"VID/PID, but Windows did not start a VID/PID-matched Net child; "
-            f"Net child status: {win.net_child_status(VID, dev.pid)}; "
-            f"PnP exposure: {win.pnp_exposure(VID, dev.pid)}")
+    for key in ("cdc_nic", "rndis_nic"):
+        dev = DEVICES[key]
+        win.set_policy(disable=True)
+        try:
+            linux.build_gadget(dev.gadget, vid=f"0x{VID}", pid=f"0x{dev.pid}")
+            attach = win.attach_result(linux.busid)
+            assert attach.ok, (
+                f"{key} should attach with filter disabled; attach={attach}")
+            assert _wait(lambda: win.pnp_exposure(VID, dev.pid)), (
+                f"{key} attached but Windows never exposed VID_{VID}&PID_{dev.pid}; "
+                "cannot diagnose network child readiness")
+
+            if _wait(lambda: win.net_child_ready(VID, dev.pid), timeout=30.0):
+                return
+
+            diagnostics.append({
+                "device": key,
+                "pid": dev.pid,
+                "attach": attach.__dict__,
+                "net_child_status": win.net_child_status(VID, dev.pid),
+                "pnp_exposure": win.pnp_exposure(VID, dev.pid),
+                "pnp_node_details": win.pnp_node_details(VID, dev.pid),
+                "windows_usbip_port": win.usbip_port_snapshot(),
+            })
+        finally:
+            linux.teardown()
+            win.cleanup()
+
+    pytest.xfail(
+        "confirmed client limitation: CDC ECM and RNDIS gadgets attach and "
+        "expose VID/PID, but Windows did not start a VID/PID-matched Net child; "
+        f"diagnostics={json.dumps(diagnostics, sort_keys=True)}")

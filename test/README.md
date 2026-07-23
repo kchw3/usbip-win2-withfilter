@@ -129,11 +129,12 @@ check, Tier B Raw Gadget lab-bring-up checks, and efficacy tests when
 `--run-efficacy` was not supplied.
 
 With efficacy enabled on the same dummy_hcd baseline, the full suite passed with
-no failures or errors: `80 passed, 8 skipped, 1 xfailed in 688.75s`. The
+no failures or errors: `80 passed, 8 skipped, 1 xfailed in 774.51s`. The
 skips were the vUDC-only connectivity check and the opt-in Tier B canaries when
 `--run-tierb-canaries` was not supplied. The single xfail was
-`test_rogue_nic_appears`: the CDC ECM gadget attached and exposed the expected
-VID/PID, but this Windows client did not start a VID/PID-matched `Net` child.
+`test_rogue_nic_appears`: CDC ECM and RNDIS both attached and exposed the
+expected VID/PID, but this Windows client did not start a VID/PID-matched `Net`
+child.
 
 Connectivity now also records a Linux attribution manifest. The current lab
 reports kernel `6.19.14`, `usbip-utils 2.0`, backend `host-auto-busid`,
@@ -250,14 +251,17 @@ compare `usbip.exe port`, `Get-PnpDevice` for `VID_16C0`, and the `usbip2_ude`
 WPP lines around `device-type filter disabled`, `ALLOWED and snapshotted`, and
 `dev ... plugged in`.
 
-**Rogue NIC efficacy xfails with CDC ECM attached but no `Net` child.** On the
-dummy_hcd baseline the CDC ECM gadget attaches with the filter disabled and
-Windows exposes `USB\VID_16C0&PID_03EB`, but this Windows image does not start a
-VID/PID-matched `Net` child. `test_rogue_nic_appears` therefore treats attach
-and PnP exposure as hard preconditions, then xfails only for the specific
-no-network-child condition. This preserves the filter matrix coverage for the
-network class while avoiding a false infrastructure failure in the opt-in
-negative control.
+**Rogue NIC efficacy xfails with software NICs attached but no `Net` child.** On
+the dummy_hcd baseline, both CDC ECM (`PID_03EB`) and RNDIS (`PID_03EC`) attach
+with the filter disabled and Windows exposes the expected VID/PID parent plus an
+MI_00 function node. Both function nodes fail with Problem 28, no bound Service,
+and no VID/PID-matched `Net` child on this Windows image. `test_rogue_nic_appears`
+therefore treats attach and PnP exposure as hard preconditions, tries CDC ECM
+then RNDIS, and xfails only after both software NIC shapes fail to bind a network
+class driver. The xfail includes per-shape PnP node details, compatible IDs,
+hardware IDs, and `usbip.exe port` output. This preserves filter matrix coverage
+for the network class while avoiding a false infrastructure failure in the
+opt-in negative control.
 
 **Raw Gadget attach fails with `device descriptor fetch failed` after export.**
 Check the raw-gadget transcript and Linux dmesg before treating this as a

@@ -190,6 +190,42 @@ function Get-PnpExposure {
         }
 }
 
+function Get-PnpNodeDetails {
+    # Detailed VID/PID-correlated PnP diagnostics for devices that attach but do
+    # not start a function-driver child. This intentionally includes failed-start
+    # nodes and selected driver-matching properties so a class-driver limitation
+    # is visible in the xfail reason instead of being reduced to "no Net child".
+    param(
+        [Parameter(Mandatory)] [string] $Vid,
+        [Parameter(Mandatory)] [string] $ProductId
+    )
+    $match = "VID_${Vid}&PID_${ProductId}"
+
+    function PropData($InstanceId, $KeyName) {
+        $p = Get-PnpDeviceProperty -InstanceId $InstanceId `
+            -KeyName $KeyName -ErrorAction SilentlyContinue
+        if ($null -eq $p) { return $null }
+        return $p.Data
+    }
+
+    Get-PnpDevice -ErrorAction SilentlyContinue |
+        Where-Object { $_.InstanceId -match $match } |
+        ForEach-Object {
+            [pscustomobject]@{
+                InstanceId    = $_.InstanceId
+                Class         = "$($_.Class)"
+                Status        = "$($_.Status)"
+                FriendlyName  = "$($_.FriendlyName)"
+                Problem       = "$(PropData $_.InstanceId 'DEVPKEY_Device_ProblemCode')"
+                Service       = "$(PropData $_.InstanceId 'DEVPKEY_Device_Service')"
+                ClassGuid     = "$(PropData $_.InstanceId 'DEVPKEY_Device_ClassGuid')"
+                Enumerator    = "$(PropData $_.InstanceId 'DEVPKEY_Device_EnumeratorName')"
+                HardwareIds   = @(PropData $_.InstanceId 'DEVPKEY_Device_HardwareIds')
+                CompatibleIds = @(PropData $_.InstanceId 'DEVPKEY_Device_CompatibleIds')
+            } | ConvertTo-Json -Compress
+        }
+}
+
 function Get-FilterEventCursor {
     # RecordId is monotonic within a Windows event log. Taking this cursor just
     # before attach makes it impossible for a stale event with the same PID to

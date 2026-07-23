@@ -643,6 +643,11 @@ class WindowsClient:
         r = self.ps(f"Get-PnpExposure -Vid '{vid}' -ProductId '{pid}'")
         return [json.loads(ln) for ln in r.std_out.decode().splitlines() if ln.strip()]
 
+    def pnp_node_details(self, vid: str, pid: str) -> list[dict]:
+        """Detailed PnP/driver matching state for all VID/PID nodes."""
+        r = self.ps(f"Get-PnpNodeDetails -Vid '{vid}' -ProductId '{pid}'")
+        return [json.loads(ln) for ln in r.std_out.decode().splitlines() if ln.strip()]
+
     def event_cursor(self) -> int:
         print("[windows] phase: read usbip2_ude event cursor", flush=True)
         r = self._ps_with_timeout(

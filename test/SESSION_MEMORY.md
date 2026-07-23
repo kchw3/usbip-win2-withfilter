@@ -40,7 +40,7 @@ Last updated: 2026-07-23
     snapshot fetches before switching to the malicious descriptor.
 - Full suite with efficacy:
   - command: `pytest -q test --run-efficacy -ra --maxfail=1`
-  - result: `80 passed, 8 skipped, 1 xfailed in 706.33s (0:11:46)`
+  - result: `80 passed, 8 skipped, 1 xfailed in 774.51s (0:12:54)`
   - no failures or errors.
 
 ## Expected skips and xfail
@@ -53,7 +53,10 @@ Last updated: 2026-07-23
     `--run-tierb-canaries` is supplied.
 - Xfail:
   - `test/test_attack_efficacy.py::test_rogue_nic_appears`
-  - attach and VID/PID PnP exposure succeed for CDC ECM, but this Windows client does not start a VID/PID-matched `Net` child.
+  - attach and VID/PID PnP exposure succeed for both CDC ECM (`PID_03EB`) and
+    RNDIS (`PID_03EC`), but this Windows image fails both MI_00 function nodes
+    with Problem 28 / no Service and does not start a VID/PID-matched `Net`
+    child.
 
 ## Implemented harness behavior
 
@@ -63,8 +66,10 @@ Last updated: 2026-07-23
 - `vendor_ff` allow-path matrix checks require successful attach plus matching PnP exposure, not `Status=OK`, because SourceSink has no Windows in-box function driver.
 - HID efficacy currently passes on the dummy_hcd lane. If it regresses to the
   previous endpoint-disabled condition, the xfail includes Linux/Windows
-  transport diagnostics. CDC ECM remains a precise xfail only after hard
-  preconditions pass.
+  transport diagnostics.
+- Rogue NIC efficacy now tries CDC ECM and RNDIS before xfail. The remaining
+  limitation is Windows network class-driver binding for the software gadget
+  functions, not USB/IP attach or VID/PID exposure.
 - Raw Gadget SET_CONFIGURATION handling uses `USB_RAW_IOCTL_CONFIGURE` followed
   by zero-length `EP0_READ`, matching OUT/no-data control completion. Using
   `EP0_WRITE` left dummy_hcd stuck at `can't set config #1, error -110` and
@@ -74,8 +79,9 @@ Last updated: 2026-07-23
 
 See `test/NEXT_STEPS_PLAN.md`. Current implementation target completed: Tier B
 Raw Gadget robustness tests are active and validated, and HID efficacy currently
-passes with diagnostic fallback for endpoint-disabled regressions. Next target:
-resolve or narrow the CDC ECM NIC xfail.
+passes with diagnostic fallback for endpoint-disabled regressions. The CDC/RNDIS
+NIC xfail is narrowed to Windows driver binding Problem 28. Next target: add a
+hardware-backed or OS-descriptor-backed network efficacy lane.
 
 ## Config knobs
 

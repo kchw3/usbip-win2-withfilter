@@ -22,7 +22,9 @@ Last updated: 2026-07-23
   - vUDC device-mode connectivity check skips under `dummy_udc.0`.
   - Tier B Raw Gadget canaries skip by default unless `--run-tierb-canaries` is
     supplied.
-  - `test_rogue_nic_appears` xfails because CDC ECM attaches and exposes VID/PID, but this Windows client does not start a VID/PID-matched `Net` child.
+  - `test_rogue_nic_appears` xfails because CDC ECM and RNDIS both attach and
+    expose VID/PID, but this Windows image fails both MI_00 function nodes with
+    Problem 28 and does not start a VID/PID-matched `Net` child.
 
 ## Ordered implementation plan
 
@@ -34,14 +36,18 @@ Last updated: 2026-07-23
 3. Completed: diagnose HID efficacy path. The dummy_hcd baseline now passes HID
    keystroke injection; if endpoint-disabled regresses, the xfail includes a
    Linux/Windows transport snapshot.
-4. Resolve or narrow the CDC ECM NIC xfail, preferably with an alternate RNDIS or hardware-backed NIC path if this Windows image lacks a CDC ECM network driver.
-5. Harden remaining oracles:
+4. Completed: narrow the CDC ECM NIC xfail by trying both CDC ECM and RNDIS and
+   recording per-shape PnP/driver diagnostics. Both shapes attach but fail
+   Windows network driver binding on this image.
+5. Add a hardware-backed or OS-descriptor-backed network efficacy lane so the
+   rogue-NIC negative control can prove a live `Net` child on this client.
+6. Harden remaining oracles:
    - assert rejection reason/class/active whitelist once the event message contract is pinned;
    - expand network/vendor allow cases;
    - keep efficacy checks VID/PID-correlated.
-6. Extend native parser fuzz coverage for multi-configuration/indexed descriptors, IAD, class-specific descriptors, excessive counts/lengths, and subclass/protocol edge cases.
-7. Validate descriptor snapshots with a WDK `/WX` build and lab run.
-8. Add an opt-in hardware-backed efficacy lane through `usbip-host`.
+7. Extend native parser fuzz coverage for multi-configuration/indexed descriptors, IAD, class-specific descriptors, excessive counts/lengths, and subclass/protocol edge cases.
+8. Validate descriptor snapshots with a WDK `/WX` build and lab run.
+9. Add an opt-in hardware-backed efficacy lane through `usbip-host`.
 
 ## Validation checklist
 

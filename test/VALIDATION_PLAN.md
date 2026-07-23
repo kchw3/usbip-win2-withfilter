@@ -274,11 +274,13 @@ not be copied into artifacts.
 1. Prevent Tier B false-green results and add explicit readiness checks.
 2. Correct the TOCTOU request-state model.
 3. Narrow the HID `xfail` and add configuration/endpoint diagnostics.
-4. Resolve or narrow the CDC ECM NIC xfail.
-5. Correlate PnP, events, policy, cleanup, and deployed artifacts.
-6. Extract and fuzz the descriptor parser.
-7. Implement descriptor snapshot consistency.
-8. Add the hardware-backed compatibility lane.
+4. Narrow the CDC ECM NIC xfail by trying alternate software NIC shapes and
+   capturing VID/PID-correlated PnP driver-binding diagnostics.
+5. Add a hardware-backed or OS-descriptor-backed network efficacy lane.
+6. Correlate PnP, events, policy, cleanup, and deployed artifacts.
+7. Extract and fuzz the descriptor parser.
+8. Implement descriptor snapshot consistency.
+9. Add the broader hardware-backed compatibility lane.
 
 ## Definition of done
 

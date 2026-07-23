@@ -92,6 +92,58 @@ def _ssh_run(client, cmd: str) -> tuple[int, str, str]:
     return rc, out.read().decode(), err.read().decode()
 
 
+_LINUX_MANIFEST_SH = r'''
+set -u
+json_escape() {
+  python3 -c 'import json,sys; print(json.dumps(sys.stdin.read().rstrip("\n")))' 2>/dev/null \
+    || sed 's/\\/\\\\/g; s/"/\\"/g; s/^/"/; s/$/"/'
+}
+field() {
+  name="$1"; shift
+  value="$("$@" 2>&1 || true)"
+  printf '"%s":%s' "$name" "$(printf '%s' "$value" | json_escape)"
+}
+module_loaded() {
+  name="$1"
+  lsmod 2>/dev/null | awk '{print $1}' | grep -qx "$name" && printf true || printf false
+}
+device_mode() {
+  ps -C usbipd -o args= 2>/dev/null | grep -qE -- '(^|[[:space:]])(-e|--device)([[:space:]]|$)'
+}
+
+udc="${UDC_NAME:-}"
+busid="${USBIP_BUSID:-}"
+backend="host"
+case "$udc" in *vudc*) backend="vudc-device" ;; esac
+if [ "$busid" = "auto" ]; then backend="${backend}-auto-busid"; fi
+usbipd_mode="absent"
+if pgrep -x usbipd >/dev/null 2>&1; then
+  if device_mode; then usbipd_mode="device"; else usbipd_mode="host"; fi
+fi
+
+printf '{'
+field kernel uname -r
+printf ','
+field kernel_full uname -a
+printf ','
+field usbip_version sh -c 'usbip version 2>&1 || usbip --version 2>&1 || true'
+printf ','
+field usbipd_args sh -c 'ps -C usbipd -o args= 2>/dev/null | paste -sd " | " -'
+printf ',"configured_udc":%s' "$(printf '%s' "$udc" | json_escape)"
+printf ',"configured_busid":%s' "$(printf '%s' "$busid" | json_escape)"
+printf ',"backend":%s' "$(printf '%s' "$backend" | json_escape)"
+printf ',"usbipd_mode":%s' "$(printf '%s' "$usbipd_mode" | json_escape)"
+printf ',"modules":{'
+printf '"libcomposite":%s' "$(module_loaded libcomposite)"
+printf ',"dummy_hcd":%s' "$(module_loaded dummy_hcd)"
+printf ',"usbip_host":%s' "$(module_loaded usbip_host)"
+printf ',"usbip_vudc":%s' "$(module_loaded usbip_vudc)"
+printf ',"raw_gadget":%s' "$(module_loaded raw_gadget)"
+printf '}'
+printf '}'
+'''
+
+
 _LINUX_USBIP_FIX_ATTEMPTED = False
 
 
@@ -332,6 +384,36 @@ def test_linux_usbipd_listening(config, ssh, pytestconfig):
     assert rc == 0 and "found" in out, (
         f"no process is listening on TCP {port} on the [linux] host -- "
         f"is usbipd running?")
+
+
+def test_linux_artifact_manifest_recorded(config, ssh, pytestconfig):
+    """Print and sanity-check the Linux kernel/USB-IP backend attribution data."""
+    _maybe_fix_linux_usbip(config, ssh, require_device_mode=_linux_uses_vudc(config),
+                           pytestconfig=pytestconfig)
+    udc = config["linux"].get("udc_name", "usbip-vudc.0")
+    busid = config["linux"].get("busid", udc)
+    cmd = (
+        f"UDC_NAME={shlex.quote(udc)} USBIP_BUSID={shlex.quote(busid)} "
+        f"bash -c {shlex.quote(_LINUX_MANIFEST_SH)}")
+    rc, out, err = _ssh_run(ssh, cmd)
+    assert rc == 0, f"Linux manifest command failed: stdout={out} stderr={err}"
+    manifest = json.loads(out)
+    print(f"[linux-manifest] {json.dumps(manifest, sort_keys=True)}")
+
+    assert manifest["kernel"], f"Linux manifest missing kernel: {manifest}"
+    assert manifest["configured_udc"] == udc, manifest
+    assert manifest["configured_busid"] == busid, manifest
+    assert manifest["usbipd_mode"] in {"host", "device"}, manifest
+    assert manifest["modules"]["libcomposite"], manifest
+    if _linux_uses_vudc(config):
+        assert manifest["backend"] == "vudc-device", manifest
+        assert manifest["usbipd_mode"] == "device", manifest
+        assert manifest["modules"]["usbip_vudc"], manifest
+    else:
+        assert manifest["backend"].startswith("host"), manifest
+        assert manifest["usbipd_mode"] == "host", manifest
+        assert manifest["modules"]["dummy_hcd"], manifest
+        assert manifest["modules"]["usbip_host"], manifest
 
 
 def test_linux_usbipd_device_mode(config, ssh, pytestconfig):

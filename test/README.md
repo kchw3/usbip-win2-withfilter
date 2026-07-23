@@ -122,17 +122,25 @@ pytest test/ -v
 
 Current validated baseline for Tier A is `dummy_hcd` with `[linux] udc_name =
 dummy_udc.0` and `busid = auto`. On 2026-07-22, connectivity passed
-(`12 passed, 1 skipped`), the full Tier A matrix passed (`35 passed`), and the
-standard full suite passed (`72 passed, 9 skipped`). The skipped tests were the
-expected vUDC-only connectivity check, Tier B Raw Gadget lab-bring-up checks,
-and efficacy tests when `--run-efficacy` was not supplied.
+(`13 passed, 1 skipped`), the full Tier A matrix passed (`35 passed`), and the
+standard full suite passed (`72 passed, 9 skipped`) before Linux manifest
+recording was added. The skipped tests were the expected vUDC-only connectivity
+check, Tier B Raw Gadget lab-bring-up checks, and efficacy tests when
+`--run-efficacy` was not supplied.
 
 With efficacy enabled on the same dummy_hcd baseline, the full suite passed with
-no failures or errors: `75 passed, 5 skipped, 1 xfailed in 675.27s`. The five
+no failures or errors: `76 passed, 5 skipped, 1 xfailed in 667.41s`. The five
 skips were the vUDC-only connectivity check and the Tier B Raw Gadget tests
 pending lab bring-up. The single xfail was `test_rogue_nic_appears`: the CDC ECM
 gadget attached and exposed the expected VID/PID, but this Windows client did
 not start a VID/PID-matched `Net` child.
+
+Connectivity now also records a Linux attribution manifest. The current lab
+reports kernel `6.19.14`, `usbip-utils 2.0`, backend `host-auto-busid`,
+`usbipd -D`, and loaded `libcomposite`, `dummy_hcd`, `usbip_host`,
+`usbip_vudc`, and `raw_gadget` modules.
+
+For the ordered follow-up plan, see [NEXT_STEPS_PLAN.md](NEXT_STEPS_PLAN.md).
 
 The efficacy / negative-control suite (`test_attack_efficacy.py`) is **opt-in**
 because it executes real payloads (keystroke injection, storage read) on the

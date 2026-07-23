@@ -219,9 +219,9 @@ void report_rejection(
 
         WCHAR msg[max_chars];
         auto st = RtlStringCchPrintfW(msg, RTL_NUMBER_OF(msg),
-                L"Blocked VID_%04X&PID_%04X on %wZ (%wZ): %hs (%sclass %02X/%02X/%02X %hs); whitelist: %s",
-                udev.idVendor, udev.idProduct, ext.node_name(), ext.busid(),
-                reason, ifrag, cls, sub, proto, usb_class_name(cls), wl);
+                L"%hs; class %02X/%02X/%02X %hs; whitelist: %s; VID_%04X&PID_%04X; bus %wZ; endpoint %wZ; %s",
+                reason, cls, sub, proto, usb_class_name(cls), wl,
+                udev.idVendor, udev.idProduct, ext.busid(), ext.node_name(), ifrag);
 
         if (st == STATUS_BUFFER_OVERFLOW) {
                 msg[RTL_NUMBER_OF(msg) - 1] = L'\0'; // truncated copy is fine for logging

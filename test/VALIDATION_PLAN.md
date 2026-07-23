@@ -173,9 +173,11 @@ transaction.
       not hidden by an expected HID failure. (done in Phase 2)
 - [x] Correlate HID/NIC child devices to the test VID/PID. (HID: Phase 2
       `Get-HidChildStatus`.)
-- [ ] Assert the rejection reason/class and active whitelist text, not only that
-      VID/PID/busid appear. (Driver currently logs VID/PID/iface/class; add once
-      the message contract is pinned.)
+- [x] Assert the rejection reason/source context, not only that VID/PID/busid
+      appear. The driver source now puts reason/class/whitelist first in the
+      event insertion string so class + whitelist assertions activate once that
+      build is deployed; current lab drivers use a compatibility path for the
+      legacy truncated event message.
 - [ ] Expand filtered allow cases to network/vendor and the other supported
       policy categories in `devices.py`/`test_matrix.py`.
 - [ ] Correlate the NIC efficacy check to the test VID/PID adapter rather than a

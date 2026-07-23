@@ -40,7 +40,7 @@ Last updated: 2026-07-23
     snapshot fetches before switching to the malicious descriptor.
 - Full suite with efficacy:
   - command: `pytest -q test --run-efficacy -ra --maxfail=1`
-  - result: `81 passed, 8 skipped in 726.45s (0:12:06)`
+  - result: `81 passed, 8 skipped in 734.70s (0:12:14)`
   - no failures, errors, or xfails.
 
 ## Expected skips and xfail
@@ -67,6 +67,11 @@ Last updated: 2026-07-23
   descriptors. Plain CDC/RNDIS still fail Windows driver binding with Problem 28,
   but `rndis_os_nic` starts a VID/PID-matched `Net` child and satisfies the
   negative control.
+- Matrix deny rows now validate the rejection-event contract beyond VID/PID/busid:
+  current deployed drivers must include the fail-closed reason and source
+  context; new driver builds put reason/class/whitelist first in the event
+  insertion string so the test also asserts the rejected class tuple and active
+  whitelist text when available.
 - Raw Gadget SET_CONFIGURATION handling uses `USB_RAW_IOCTL_CONFIGURE` followed
   by zero-length `EP0_READ`, matching OUT/no-data control completion. Using
   `EP0_WRITE` left dummy_hcd stuck at `can't set config #1, error -110` and
@@ -77,8 +82,9 @@ Last updated: 2026-07-23
 See `test/NEXT_STEPS_PLAN.md`. Current implementation target completed: Tier B
 Raw Gadget robustness tests are active and validated, and HID efficacy currently
 passes with diagnostic fallback for endpoint-disabled regressions. Rogue-NIC
-efficacy now passes via the OS-descriptor-backed RNDIS lane. Next target: harden
-remaining oracles and expand parser fuzz coverage per `NEXT_STEPS_PLAN.md`.
+efficacy now passes via the OS-descriptor-backed RNDIS lane. Rejection-event
+oracle hardening is in progress. Next target: expand network/vendor allow cases
+or parser fuzz coverage per `NEXT_STEPS_PLAN.md`.
 
 ## Config knobs
 

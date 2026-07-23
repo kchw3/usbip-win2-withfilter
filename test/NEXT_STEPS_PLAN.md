@@ -42,7 +42,10 @@ Last updated: 2026-07-23
    (`rndis_os_nic`) so the rogue-NIC negative control proves a live
    VID/PID-matched `Net` child on this client.
 6. Harden remaining oracles:
-   - assert rejection reason/class/active whitelist once the event message contract is pinned;
+   - completed: rejection events now assert fail-closed reason and source
+     context on the current deployed driver; the driver source event contract now
+     puts reason/class/whitelist first so full class + whitelist assertions
+     activate once that build is deployed.
    - expand network/vendor allow cases;
    - keep efficacy checks VID/PID-correlated.
 7. Extend native parser fuzz coverage for multi-configuration/indexed descriptors, IAD, class-specific descriptors, excessive counts/lengths, and subclass/protocol edge cases.

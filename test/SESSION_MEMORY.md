@@ -24,7 +24,7 @@ Last updated: 2026-07-23
   - configured_udc/configured_busid: `dummy_udc.0` / `auto`
   - usbipd_args/mode: `usbipd -D` / `host`
   - modules loaded: `libcomposite`, `dummy_hcd`, `usbip_host`, `usbip_vudc`, `raw_gadget`
-- Full Tier A matrix: `35 passed in 548.17s (0:09:08)`.
+- Full Tier A matrix: `56 passed in 891.51s (0:14:51)`.
 - Full suite without efficacy: `72 passed, 9 skipped in 523.97s (0:08:43)`.
 - Tier B Raw Gadget canaries:
   - command: `pytest -q test/test_tierb_canaries.py --run-tierb-canaries --maxfail=1`
@@ -40,7 +40,7 @@ Last updated: 2026-07-23
     snapshot fetches before switching to the malicious descriptor.
 - Full suite with efficacy:
   - command: `pytest -q test --run-efficacy -ra --maxfail=1`
-  - result: `81 passed, 8 skipped in 734.70s (0:12:14)`
+  - result: `103 passed, 8 skipped in 1107.24s (0:18:27)`
   - no failures, errors, or xfails.
 
 ## Expected skips and xfail
@@ -72,6 +72,10 @@ Last updated: 2026-07-23
   context; new driver builds put reason/class/whitelist first in the event
   insertion string so the test also asserts the rejected class tuple and active
   whitelist text when available.
+- Matrix policy coverage now includes `allow_network`, `allow_vendor`, and
+  `allow_network_vendor`. RNDIS is modeled as `network` because the production
+  parser/filter sees the configfs RNDIS function as network-class, not
+  vendor-specific.
 - Raw Gadget SET_CONFIGURATION handling uses `USB_RAW_IOCTL_CONFIGURE` followed
   by zero-length `EP0_READ`, matching OUT/no-data control completion. Using
   `EP0_WRITE` left dummy_hcd stuck at `can't set config #1, error -110` and
@@ -83,8 +87,8 @@ See `test/NEXT_STEPS_PLAN.md`. Current implementation target completed: Tier B
 Raw Gadget robustness tests are active and validated, and HID efficacy currently
 passes with diagnostic fallback for endpoint-disabled regressions. Rogue-NIC
 efficacy now passes via the OS-descriptor-backed RNDIS lane. Rejection-event
-oracle hardening is in progress. Next target: expand network/vendor allow cases
-or parser fuzz coverage per `NEXT_STEPS_PLAN.md`.
+oracle hardening and network/vendor allow expansion are implemented. Next target:
+parser fuzz coverage per `NEXT_STEPS_PLAN.md`.
 
 ## Config knobs
 

@@ -178,8 +178,8 @@ transaction.
       event insertion string so class + whitelist assertions activate once that
       build is deployed; current lab drivers use a compatibility path for the
       legacy truncated event message.
-- [ ] Expand filtered allow cases to network/vendor and the other supported
-      policy categories in `devices.py`/`test_matrix.py`.
+- [x] Expand filtered allow cases to network/vendor in
+      `devices.py`/`test_matrix.py`.
 - [ ] Correlate the NIC efficacy check to the test VID/PID adapter rather than a
       global adapter-name baseline diff.
 

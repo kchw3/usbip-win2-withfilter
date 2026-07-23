@@ -8,9 +8,9 @@ Last updated: 2026-07-23
 - Do not use `usbip-vudc` for Tier A mass-storage or composite mass-storage rows; the lab kernel reproduced a `usbip_vudc::vep_dequeue` crash during teardown.
 - Latest validation:
   - Connectivity: `13 passed, 1 skipped`.
-  - Full Tier A matrix: `35 passed`.
+  - Full Tier A matrix: `56 passed`.
   - Full suite: `72 passed, 9 skipped`.
-  - Full suite with efficacy: `81 passed, 8 skipped`.
+  - Full suite with efficacy: `103 passed, 8 skipped`.
   - Tier B Raw Gadget canaries: `7 passed`.
   - Tier B Raw Gadget robustness: `4 passed`.
 - Phase 0 Linux attribution is implemented: connectivity records kernel, USB/IP tool, module, configured UDC/busid, backend, and daemon mode.
@@ -46,7 +46,9 @@ Last updated: 2026-07-23
      context on the current deployed driver; the driver source event contract now
      puts reason/class/whitelist first so full class + whitelist assertions
      activate once that build is deployed.
-   - expand network/vendor allow cases;
+   - completed: expanded network/vendor allow cases (`allow_network`,
+     `allow_vendor`, `allow_network_vendor`) and aligned the RNDIS decision
+     model with the production parser's network-class view.
    - keep efficacy checks VID/PID-correlated.
 7. Extend native parser fuzz coverage for multi-configuration/indexed descriptors, IAD, class-specific descriptors, excessive counts/lengths, and subclass/protocol edge cases.
 8. Validate descriptor snapshots with a WDK `/WX` build and lab run.

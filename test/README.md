@@ -122,14 +122,14 @@ pytest test/ -v
 
 Current validated baseline for Tier A is `dummy_hcd` with `[linux] udc_name =
 dummy_udc.0` and `busid = auto`. On 2026-07-23, connectivity passed
-(`13 passed, 1 skipped`), the full Tier A matrix passed (`35 passed`), and the
+(`13 passed, 1 skipped`), the full Tier A matrix passed (`56 passed`), and the
 standard full suite passed (`72 passed, 9 skipped`) before Linux manifest
 recording was added. The skipped tests were the expected vUDC-only connectivity
 check, Tier B Raw Gadget lab-bring-up checks, and efficacy tests when
 `--run-efficacy` was not supplied.
 
 With efficacy enabled on the same dummy_hcd baseline, the expected full-suite
-state is `81 passed, 8 skipped` with no failures or xfails. The skips are the
+state is `103 passed, 8 skipped` with no failures or xfails. The skips are the
 vUDC-only connectivity check and the opt-in Tier B canaries when
 `--run-tierb-canaries` is not supplied. The rogue-NIC negative control is
 satisfied by the RNDIS + Microsoft OS descriptor gadget (`rndis_os_nic`), which

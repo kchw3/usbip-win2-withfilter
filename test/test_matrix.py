@@ -33,6 +33,9 @@ _POLICY_WHITELIST_SNIPPETS = {
     "allow_hid": {"03/**/**"},
     "allow_ms": {"08/**/**"},
     "allow_hid_ms": {"03/**/**", "08/**/**"},
+    "allow_network": {"02/**/**", "0A/**/**"},
+    "allow_vendor": {"FF/**/**"},
+    "allow_network_vendor": {"02/**/**", "0A/**/**", "FF/**/**"},
 }
 
 

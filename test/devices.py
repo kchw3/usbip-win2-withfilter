@@ -24,7 +24,7 @@ DEVICES = {
     "mass_storage":        Device("mass_storage",        "03E9", frozenset({"mass_storage"})),
     "composite_ms_hid":    Device("composite_ms_hid",    "03EA", frozenset({"hid", "mass_storage"})),
     "cdc_nic":             Device("cdc_nic",             "03EB", frozenset({"network"})),
-    "rndis_nic":           Device("rndis_nic",           "03EC", frozenset({"network", "vendor"})),
+    "rndis_nic":           Device("rndis_nic",           "03EC", frozenset({"network"})),
     "vendor_ff":           Device("vendor_ff",           "03ED", frozenset({"vendor"}), False),
     "multicfg_hidden_hid": Device("multicfg_hidden_hid", "03EE", frozenset({"hid", "mass_storage"})),
 }
@@ -32,11 +32,14 @@ DEVICES = {
 
 # Policies expressed as (kind, whitelist-set). "disabled" allows everything.
 POLICIES = {
-    "deny_all":     frozenset(),
-    "allow_hid":    frozenset({"hid"}),
-    "allow_ms":     frozenset({"mass_storage"}),
-    "allow_hid_ms": frozenset({"hid", "mass_storage"}),
-    "disabled":     None,  # sentinel: filtering off
+    "deny_all":             frozenset(),
+    "allow_hid":            frozenset({"hid"}),
+    "allow_ms":             frozenset({"mass_storage"}),
+    "allow_hid_ms":         frozenset({"hid", "mass_storage"}),
+    "allow_network":        frozenset({"network"}),
+    "allow_vendor":         frozenset({"vendor"}),
+    "allow_network_vendor": frozenset({"network", "vendor"}),
+    "disabled":             None,  # sentinel: filtering off
 }
 
 

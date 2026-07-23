@@ -90,6 +90,14 @@ def test_decision_model_composite_requires_both():
     assert expected_allow("allow_hid_ms", "composite_ms_hid") is True
 
 
+def test_decision_model_network_vendor_policies():
+    assert expected_allow("allow_network", "cdc_nic") is True
+    assert expected_allow("allow_network", "rndis_nic") is True
+    assert expected_allow("allow_vendor", "vendor_ff") is True
+    assert expected_allow("allow_vendor", "rndis_nic") is False
+    assert expected_allow("allow_network_vendor", "rndis_nic") is True
+
+
 def test_decision_model_disabled_allows_all():
     for key in DEVICES:
         assert expected_allow("disabled", key) is True

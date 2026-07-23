@@ -27,7 +27,7 @@ NETWORK_EFFICACY_DEVICES = {
     "cdc_nic": DEVICES["cdc_nic"],
     "rndis_nic": DEVICES["rndis_nic"],
     "rndis_os_nic": DEVICES["rndis_nic"].__class__(
-        "rndis_os_nic", "03EF", frozenset({"network", "vendor"})),
+        "rndis_os_nic", "03EF", frozenset({"network"})),
 }
 
 

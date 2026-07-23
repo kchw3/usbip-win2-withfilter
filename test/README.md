@@ -129,9 +129,8 @@ check, Tier B Raw Gadget lab-bring-up checks, and efficacy tests when
 `--run-efficacy` was not supplied.
 
 With efficacy enabled on the same dummy_hcd baseline, the full suite passed with
-no failures or errors: `76 passed, 12 skipped, 1 xfailed in 668.42s`. The
-skips were the vUDC-only connectivity check, the Tier B robustness rows pending
-conversion to the proven Raw Gadget path, and the opt-in Tier B canaries when
+no failures or errors: `80 passed, 8 skipped, 1 xfailed in 688.75s`. The
+skips were the vUDC-only connectivity check and the opt-in Tier B canaries when
 `--run-tierb-canaries` was not supplied. The single xfail was
 `test_rogue_nic_appears`: the CDC ECM gadget attached and exposed the expected
 VID/PID, but this Windows client did not start a VID/PID-matched `Net` child.
@@ -150,6 +149,16 @@ The current lab result is `7 passed in 24.22s`. These canaries prove the
 raw-gadget UDC names, dead producer detection, wrong UDC failure, suppressed
 export failure, wrong busid failure, omitted configuration-response detection,
 and one benign Raw Gadget attach/PnP exposure through Windows.
+
+Tier B robustness rows are active security gates:
+```
+pytest test/test_robustness.py -v
+```
+The current lab result is `4 passed in 41.15s`. This covers malformed
+descriptor fail-closed variants and descriptor TOCTOU. On the dummy_hcd lane,
+the TOCTOU profile serves four benign configuration responses first: two for
+local pre-export enumeration and two for the Windows filter snapshot. Any later
+changed configuration descriptor reaching Windows is treated as a bypass.
 
 For the ordered follow-up plan, see [NEXT_STEPS_PLAN.md](NEXT_STEPS_PLAN.md).
 

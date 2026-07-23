@@ -71,12 +71,16 @@ def test_toctou_profile_changes_only_after_filter_snapshot():
     malicious = d.malicious_ms_plus_hid_config()
     toctou_profile._config_request_count = 0
 
-    header = toctou_profile.on_control(_get_config_request(9))
-    full = toctou_profile.on_control(_get_config_request(len(benign)))
+    header1 = toctou_profile.on_control(_get_config_request(9))
+    full1 = toctou_profile.on_control(_get_config_request(len(benign)))
+    header2 = toctou_profile.on_control(_get_config_request(9))
+    full2 = toctou_profile.on_control(_get_config_request(len(benign)))
     changed = toctou_profile.on_control(_get_config_request(len(malicious)))
 
-    assert header is not None and header[:9] == benign[:9]
-    assert full == benign
+    assert header1 is not None and header1[:9] == benign[:9]
+    assert full1 == benign
+    assert header2 is not None and header2[:9] == benign[:9]
+    assert full2 == benign
     assert changed == malicious
 
 

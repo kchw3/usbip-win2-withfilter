@@ -10,8 +10,9 @@ Last updated: 2026-07-23
   - Connectivity: `13 passed, 1 skipped`.
   - Full Tier A matrix: `35 passed`.
   - Full suite: `72 passed, 9 skipped`.
-  - Full suite with efficacy: `76 passed, 12 skipped, 1 xfailed`.
+  - Full suite with efficacy: `80 passed, 8 skipped, 1 xfailed`.
   - Tier B Raw Gadget canaries: `7 passed`.
+  - Tier B Raw Gadget robustness: `4 passed`.
 - Phase 0 Linux attribution is implemented: connectivity records kernel, USB/IP tool, module, configured UDC/busid, backend, and daemon mode.
 - Tier B Raw Gadget bring-up canaries are implemented and opt-in via
   `--run-tierb-canaries`. They now prove UDC naming, dead producer detection,
@@ -21,8 +22,6 @@ Last updated: 2026-07-23
   - vUDC device-mode connectivity check skips under `dummy_udc.0`.
   - Tier B Raw Gadget canaries skip by default unless `--run-tierb-canaries` is
     supplied.
-  - Tier B Raw Gadget robustness tests remain skipped pending conversion from
-    bring-up canaries to security-gate rows.
   - `test_rogue_nic_appears` xfails because CDC ECM attaches and exposes VID/PID, but this Windows client does not start a VID/PID-matched `Net` child.
 
 ## Ordered implementation plan
@@ -31,7 +30,7 @@ Last updated: 2026-07-23
    - confirm `raw_udc_driver` / `raw_udc_device`;
    - prove killed producer, suppressed export, wrong busid, and omitted crafted response all fail red;
    - prove one benign Raw Gadget profile enumerates through the same UDC/USB-IP path.
-2. Convert Tier B robustness tests from unconditional skips to gated Raw Gadget security rows now that the canary path is proven.
+2. Completed: convert Tier B robustness tests from unconditional skips to gated Raw Gadget security rows now that the canary path is proven.
 3. Diagnose HID efficacy xfail with TCP/3240, Linux gadget/UDC traces, and Windows WPP to identify the first missing transaction.
 4. Resolve or narrow the CDC ECM NIC xfail, preferably with an alternate RNDIS or hardware-backed NIC path if this Windows image lacks a CDC ECM network driver.
 5. Harden remaining oracles:
@@ -58,7 +57,5 @@ Last updated: 2026-07-23
 
 - Keep destructive efficacy tests opt-in via `--run-efficacy`.
 - Keep Tier B canaries opt-in via `--run-tierb-canaries`.
-- Keep Tier B robustness rows skipped until they are converted to use the proven
-  Raw Gadget canary path with hard failure oracles.
 - Do not commit ignored `test/config.ini`.
 - Commit and push validated changes to `master`.

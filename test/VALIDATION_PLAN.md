@@ -82,8 +82,8 @@ beyond its configured class policy.
       (`Clear-UsbipState` now verifies and throws; `WindowsClient.cleanup`)
 - [x] Classify tests explicitly as unit, Tier A integration, Tier B adversarial,
       efficacy, or hardware-backed. (README + pytest markers/skips)
-- [ ] Also record the Linux kernel / USB-IP tool versions in run output
-      (server-side manifest, still to add).
+- [x] Also record the Linux kernel / USB-IP tool versions in run output.
+      (`test_connectivity.py::test_linux_usbip_attribution_manifest`)
 
 **Exit criterion:** an infrastructure failure cannot be reported as a filter pass
 or expected filter failure.
@@ -108,13 +108,15 @@ or expected filter failure.
       `test_robustness.py` `_served_malicious_after_snapshot`)
 - [x] Give every run a unique run_id, per-run directory, logs, and PID-scoped
       teardown. (`RawGadgetRun`)
-- [ ] Unit-test the encoding/packing/dispatch without a kernel. (done:
+- [x] Unit-test the encoding/packing/dispatch without a kernel. (done:
       `test/test_raw_gadget.py`)
-- [ ] **Lab bring-up (blocking to un-skip):** confirm `raw_udc_driver` /
+- [x] **Lab bring-up (blocking to un-skip):** confirm `raw_udc_driver` /
       `raw_udc_device` for the server kernel; run fault-injection canaries
       (kill producer, suppress export, wrong busid, omit crafted response) and
       confirm each goes RED; add a benign Raw Gadget canary that enumerates
       through the same UDC/USB-IP path; then remove the skip.
+- [x] Promote Tier B robustness rows to active security gates after bring-up.
+      (`test/test_robustness.py`; current lab result: `4 passed`)
 
 **Exit criterion:** deliberately breaking Raw Gadget startup or export fails the
 test as infrastructure failure, while a valid adversarial exchange reaches the

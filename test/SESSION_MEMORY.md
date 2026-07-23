@@ -32,9 +32,15 @@ Last updated: 2026-07-23
   - proves UDC naming, dead producer detection, wrong UDC failure, suppressed
     export failure, wrong busid failure, omitted config-response detection, and
     benign Raw Gadget attach/PnP exposure through Windows.
+- Tier B Raw Gadget robustness:
+  - command: `pytest -q test/test_robustness.py --maxfail=1 -ra`
+  - result: `4 passed in 41.15s`
+  - malformed descriptor rows are now active security gates; TOCTOU accounts for
+    dummy_hcd's two pre-export configuration fetches plus the filter's two
+    snapshot fetches before switching to the malicious descriptor.
 - Full suite with efficacy:
   - command: `pytest -q test --run-efficacy -ra --maxfail=1`
-  - result: `76 passed, 12 skipped, 1 xfailed in 668.42s (0:11:08)`
+  - result: `80 passed, 8 skipped, 1 xfailed in 688.75s (0:11:28)`
   - no failures or errors.
 
 ## Expected skips and xfail
@@ -42,15 +48,9 @@ Last updated: 2026-07-23
 - Skipped under dummy_hcd:
   - `test/test_connectivity.py::test_linux_usbipd_device_mode`
     (`udc_name='dummy_udc.0' is not a vudc; device-mode check N/A`)
-  - `test/test_robustness.py::test_malformed_descriptors_fail_closed[zero_interface]`
-  - `test/test_robustness.py::test_malformed_descriptors_fail_closed[lying_count]`
-  - `test/test_robustness.py::test_malformed_descriptors_fail_closed[bad_total_length]`
-  - `test/test_robustness.py::test_descriptor_toctou_no_bypass`
 - Tier B canaries:
   - `test/test_tierb_canaries.py` has 7 tests skipped by default unless
     `--run-tierb-canaries` is supplied.
-- Tier B robustness skips remain intentional until the robustness rows are
-  converted from unconditional skips to the proven Raw Gadget stimulus path.
 - Xfail:
   - `test/test_attack_efficacy.py::test_rogue_nic_appears`
   - attach and VID/PID PnP exposure succeed for CDC ECM, but this Windows client does not start a VID/PID-matched `Net` child.
@@ -70,9 +70,8 @@ Last updated: 2026-07-23
 ## Next work
 
 See `test/NEXT_STEPS_PLAN.md`. Current implementation target completed: Tier B
-Raw Gadget bring-up canaries are implemented and validated. Next target: convert
-Tier B robustness tests from unconditional skips to gated Raw Gadget security
-rows.
+Raw Gadget robustness tests are active and validated. Next target: diagnose the
+HID efficacy xfail with TCP/3240, Linux gadget/UDC traces, and Windows WPP.
 
 ## Config knobs
 

@@ -5,7 +5,7 @@ These probe the parts of the filter most likely to be weak:
   - descriptor TOCTOU must not let Windows enumerate an interface the filter
     never evaluated.
 
-Skipped unless test/config.ini exists AND the server has raw_gadget set up.
+Requires test/config.ini and a server with raw_gadget set up.
 Run: pytest test/test_robustness.py -v
 """
 
@@ -15,22 +15,10 @@ import time
 
 import pytest
 
-# The Raw Gadget transport, readiness protocol, and transcript oracles are now
-# implemented (linux/raw_gadget/_raw_gadget.py, _runner.py; conftest
-# start_raw_gadget). They still require one-time lab bring-up and validation on a
-# real kernel + Windows client -- in particular confirming the raw_gadget UDC
-# names for the server's kernel and that the fault-injection canaries go red --
-# before they can be trusted as security gates. Keep them skipped until that
-# bring-up is signed off (VALIDATION_PLAN.md phase 1). Enabling them prematurely
-# risks interpreting infra failures as security passes.
-pytestmark = pytest.mark.skip(
-    reason="Tier B pending lab bring-up/validation on real kernel + client; "
-           "see VALIDATION_PLAN.md phase 1",
-)
-
 MALFORMED_PID = "03F1"
 TOCTOU_PID = "03F0"
 VID = "16C0"
+TOCTOU_BENIGN_CONFIG_RESPONSES = 4
 
 MALFORMED_VARIANTS = ["zero_interface", "lying_count", "bad_total_length"]
 
@@ -122,7 +110,12 @@ def test_descriptor_toctou_no_bypass(linux, win):
     win.set_policy(allow=["mass_storage"])
     baseline = win.hid_instance_ids()
 
-    run = linux.start_raw_gadget("toctou", expected_vid=VID, expected_pid=TOCTOU_PID)
+    run = linux.start_raw_gadget(
+        "toctou",
+        expected_vid=VID,
+        expected_pid=TOCTOU_PID,
+        env={"BENIGN_CONFIG_RESPONSES": str(TOCTOU_BENIGN_CONFIG_RESPONSES)},
+    )
     try:
         attach = win.attach_result(linux.busid)
         assert attach.ok, (
@@ -130,16 +123,19 @@ def test_descriptor_toctou_no_bypass(linux, win):
             f"benign snapshot should be allowed, but attach failed: {attach}")
         new_hid = _watch_for_new_hid(win, baseline)
 
-        # Primary oracle: prove the filter consumed its two-request benign
-        # snapshot (header + full body), then require that no later changed
-        # descriptor was delivered to Windows. UdeCx should serve the immutable
-        # registered snapshot internally, so no later remote config request is
-        # expected at all.
+        # Primary oracle: prove dummy_hcd's local pre-export enumeration and the
+        # filter's two-request snapshot both consumed the same benign descriptor,
+        # then require that no later changed descriptor was delivered to Windows.
+        # UdeCx should serve the immutable registered snapshot internally, so no
+        # later remote config request is expected at all.
         transcript = linux.read_raw_transcript(run)
         configs = _configuration_responses(transcript)
-        assert len(configs) >= 2 and configs[0] == configs[1], (
-            "TOCTOU infrastructure failure: expected two identical benign "
-            f"configuration responses for the filter, got {configs}")
+        benign = configs[:TOCTOU_BENIGN_CONFIG_RESPONSES]
+        assert (len(benign) == TOCTOU_BENIGN_CONFIG_RESPONSES and
+                len(set(benign)) == 1), (
+            "TOCTOU infrastructure failure: expected local pre-export "
+            "enumeration and filter snapshot fetches to receive identical "
+            f"benign configuration responses, got {configs}")
         assert not _served_malicious_after_snapshot(transcript), (
             "TOCTOU BYPASS: a changed (malicious) configuration descriptor was "
             "delivered to the client after the filter's benign snapshot")
@@ -169,4 +165,10 @@ def _served_malicious_after_snapshot(transcript: list[dict]) -> bool:
     snapshot was later transferred to the client (the TOCTOU condition itself).
     """
     responses = _configuration_responses(transcript)
-    return any(response != responses[0] for response in responses[1:]) if responses else False
+    if len(responses) <= TOCTOU_BENIGN_CONFIG_RESPONSES:
+        return False
+    benign = responses[0]
+    return any(
+        response != benign
+        for response in responses[TOCTOU_BENIGN_CONFIG_RESPONSES:]
+    )

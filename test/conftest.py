@@ -12,11 +12,15 @@ without lab access still collects cleanly. The pure-unit tests
 from __future__ import annotations
 
 import configparser
+import base64
+import gzip
+import io
 import json
 import os
 import queue
 import re
 import shlex
+import tarfile
 import textwrap
 import threading
 import time
@@ -27,6 +31,8 @@ from pathlib import Path
 import pytest
 
 CONFIG_PATH = Path(__file__).with_name("config.ini")
+LOCAL_LINUX_DIR = Path(__file__).parent / "linux"
+LOCAL_WINDOWS_HELPERS = Path(__file__).parent / "windows" / "helpers.ps1"
 
 
 def pytest_addoption(parser):
@@ -117,6 +123,7 @@ class LinuxServer:
         if s.get("key_filename"):
             kwargs["key_filename"] = os.path.expanduser(s["key_filename"])
         self.client.connect(s["host"], **kwargs)
+        self._ensure_linux_helpers_available()
 
     def run(
         self, cmd: str, check: bool = True, timeout: float | None = None,
@@ -159,6 +166,97 @@ class LinuxServer:
         if check and rc != 0:
             raise RuntimeError(f"[linux] {cmd!r} exit {rc}\n{stdout}\n{stderr}")
         return stdout + stderr
+
+    def _test_dir_has_helpers(self, path: str) -> bool:
+        out = self.run(
+            f"test -f {shlex.quote(path)}/gadget_lib.sh && "
+            f"test -f {shlex.quote(path)}/gadgets/teardown.sh && echo ok",
+            check=False, timeout=10.0)
+        return out.strip().endswith("ok")
+
+    def _ensure_linux_helpers_available(self) -> None:
+        """Use configured [linux] test_dir, or deploy a temp copy if missing.
+
+        The harness executes Linux helper scripts from the remote host. If the
+        configured test_dir is absent on a fresh lab, first try a normal SFTP
+        copy into a user-writable temp directory. If SFTP/file copy is blocked,
+        fall back to an encoded tarball decoded/extracted by a remote Python
+        script. Either way, subsequent commands run from self.test_dir.
+        """
+        if self._test_dir_has_helpers(self.test_dir):
+            return
+
+        fallback = f"/tmp/usbip-filter-test-linux-{uuid.uuid4().hex[:8]}"
+        print(
+            f"[linux] configured test_dir={self.test_dir!r} is missing helpers; "
+            f"trying temp deployment at {fallback!r}",
+            flush=True)
+        errors: list[str] = []
+
+        try:
+            self._copy_linux_helpers_sftp(fallback)
+            if self._test_dir_has_helpers(fallback):
+                self.test_dir = fallback
+                print(f"[linux] using temp helper copy {fallback}", flush=True)
+                return
+            errors.append("SFTP copy completed but helper files were not present")
+        except Exception as exc:  # noqa: BLE001 - preserve fallback diagnostics
+            errors.append(f"SFTP copy failed: {type(exc).__name__}: {exc}")
+
+        try:
+            self._copy_linux_helpers_encoded(fallback)
+            if self._test_dir_has_helpers(fallback):
+                self.test_dir = fallback
+                print(f"[linux] using encoded temp helper copy {fallback}", flush=True)
+                return
+            errors.append("encoded copy completed but helper files were not present")
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"encoded copy failed: {type(exc).__name__}: {exc}")
+
+        raise RuntimeError(
+            f"[linux] configured test_dir={self.test_dir!r} is missing helpers "
+            "and fallback deployment failed:\n- " + "\n- ".join(errors))
+
+    def _copy_linux_helpers_sftp(self, remote_root: str) -> None:
+        sftp = self.client.open_sftp()
+        try:
+            self.run(f"mkdir -p {shlex.quote(remote_root)}", check=True, timeout=10.0)
+
+            def put_dir(local: Path, remote: str) -> None:
+                self.run(f"mkdir -p {shlex.quote(remote)}", check=True, timeout=10.0)
+                for item in local.iterdir():
+                    if item.name == "__pycache__":
+                        continue
+                    rpath = f"{remote}/{item.name}"
+                    if item.is_dir():
+                        put_dir(item, rpath)
+                    elif item.is_file():
+                        sftp.put(str(item), rpath)
+                        mode = item.stat().st_mode & 0o777
+                        if mode:
+                            sftp.chmod(rpath, mode)
+
+            put_dir(LOCAL_LINUX_DIR, remote_root)
+        finally:
+            sftp.close()
+
+    def _copy_linux_helpers_encoded(self, remote_root: str) -> None:
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+            for path in LOCAL_LINUX_DIR.rglob("*"):
+                if "__pycache__" in path.parts:
+                    continue
+                tf.add(path, arcname=path.relative_to(LOCAL_LINUX_DIR))
+        encoded = base64.b64encode(buf.getvalue()).decode("ascii")
+        script = textwrap.dedent(f"""
+            import base64, io, os, tarfile
+            root = {remote_root!r}
+            os.makedirs(root, exist_ok=True)
+            data = base64.b64decode({encoded!r})
+            with tarfile.open(fileobj=io.BytesIO(data), mode='r:gz') as tf:
+                tf.extractall(root)
+        """)
+        self.run(f"python3 -c {shlex.quote(script)}", check=True, timeout=30.0)
 
     def ensure_vudc_ready(self) -> None:
         """Server-side preflight for the usbip-vudc gadget path.
@@ -540,6 +638,9 @@ class WindowsClient:
 
         w = cp["windows"]
         self.helpers = w["helpers"]
+        self._helper_mode = "configured-file"
+        self._embedded_helpers_b64 = base64.b64encode(
+            gzip.compress(LOCAL_WINDOWS_HELPERS.read_bytes())).decode("ascii")
         self.usbip = w.get("usbip_exe", "usbip.exe")
         self.server = cp["server"]["address"]
         self.cleanup_timeout = w.getfloat("cleanup_timeout", fallback=60.0)
@@ -555,23 +656,132 @@ class WindowsClient:
             auth=(w["user"], w["password"]),
             transport=w.get("transport", "ntlm"),
         )
+        self._prepare_helpers()
 
     def ps(self, script: str) -> "winrm.Response":
-        # Dot-source the helpers by *content*, not by path. Loading a .ps1 file
-        # is gated by PowerShell's execution policy (which may be locked to
-        # Restricted/AllSigned by Group Policy on a hardened client and cannot be
-        # overridden per-user); creating a script block from a string is not.
-        # This keeps the harness working without requiring Set-ExecutionPolicy.
-        full = (
-            f"$__helpers = Get-Content -Raw -LiteralPath {self.helpers!r}\n"
-            f". ([scriptblock]::Create($__helpers))\n"
-            f"$UsbipExe = {self.usbip!r}\n"
-            f"{script}"
-        )
+        full = self._helper_prelude() + f"$UsbipExe = {self.usbip!r}\n{script}"
         r = self.session.run_ps(full)
         if r.status_code != 0:
             raise RuntimeError(f"[win] ps failed\n{r.std_out.decode()}\n{r.std_err.decode()}")
         return r
+
+    def _run_raw_ps(self, script: str):
+        return self.session.run_ps(script)
+
+    def _prepare_helpers(self) -> None:
+        """Select a helper-loading strategy for the Windows client.
+
+        Prefer the configured helper path. If missing or not loadable, copy the
+        local helper to a per-user temp path and load from there. If that copy or
+        load fails, fall back to an encoded in-memory script block.
+        """
+        if self._helper_bootstrap_works(self.helpers):
+            self._helper_mode = "configured-file"
+            return
+
+        errors: list[str] = []
+        try:
+            candidate = self._copy_windows_helpers_temp()
+            if candidate and self._helper_bootstrap_works(candidate):
+                self.helpers = candidate
+                self._helper_mode = "temp-file"
+                print(f"[windows] using temp helper copy {candidate}", flush=True)
+                return
+            errors.append(f"temp copy produced unusable helper path: {candidate!r}")
+        except Exception as exc:  # noqa: BLE001 - preserve fallback path
+            errors.append(f"temp copy exception: {type(exc).__name__}: {exc}")
+            print(
+                f"[windows] temp helper copy failed; trying embedded helpers: "
+                f"{type(exc).__name__}: {exc}",
+                flush=True)
+
+        try:
+            if self._embedded_helper_bootstrap_works():
+                self._helper_mode = "embedded"
+                print("[windows] using encoded in-memory helpers.ps1", flush=True)
+                return
+            errors.append("embedded helper bootstrap returned non-zero")
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"embedded helper exception: {type(exc).__name__}: {exc}")
+
+        raise RuntimeError(
+            "[windows] helpers.ps1 is missing or not loadable from the configured "
+            "path, temp-file copy failed, and encoded script-block fallback failed:\n- "
+            + "\n- ".join(errors))
+
+    def _copy_windows_helpers_temp(self) -> str | None:
+        init = self._run_raw_ps(
+            "$p = [IO.Path]::Combine([IO.Path]::GetTempPath(), 'usbip-filter-test-helpers.ps1')\n"
+            "$b = $p + '.b64'\n"
+            "Remove-Item -LiteralPath $p,$b -ErrorAction SilentlyContinue\n"
+            "[IO.File]::WriteAllText($b, '', [Text.Encoding]::ASCII)\n"
+            "Write-Output $p\n")
+        if init.status_code != 0:
+            raise RuntimeError(
+                f"temp init failed: {init.status_code} "
+                f"{init.std_out.decode(errors='replace')} "
+                f"{init.std_err.decode(errors='replace')}")
+        path = init.std_out.decode(errors="replace").strip().splitlines()[-1]
+        b64_path = path + ".b64"
+        chunk_size = 500
+        for offset in range(0, len(self._embedded_helpers_b64), chunk_size):
+            chunk = self._embedded_helpers_b64[offset:offset + chunk_size]
+            append = self._run_raw_ps(
+                f"[IO.File]::AppendAllText({b64_path!r}, {chunk!r}, [Text.Encoding]::ASCII)\n")
+            if append.status_code != 0:
+                raise RuntimeError(
+                    f"temp append failed at offset {offset}: {append.status_code} "
+                    f"{append.std_out.decode(errors='replace')} "
+                    f"{append.std_err.decode(errors='replace')}")
+        finalize = self._run_raw_ps(
+            f"$data = [Convert]::FromBase64String((Get-Content -Raw -LiteralPath {b64_path!r}))\n"
+            "$ms = New-Object IO.MemoryStream(,$data)\n"
+            "$gz = New-Object IO.Compression.GZipStream($ms, [IO.Compression.CompressionMode]::Decompress)\n"
+            f"$out = [IO.File]::Create({path!r})\n"
+            "$gz.CopyTo($out)\n"
+            "$out.Dispose(); $gz.Dispose(); $ms.Dispose()\n"
+            f"Remove-Item -LiteralPath {b64_path!r} -ErrorAction SilentlyContinue\n"
+            f"Write-Output {path!r}\n")
+        if finalize.status_code != 0:
+            raise RuntimeError(
+                f"temp finalize failed: {finalize.status_code} "
+                f"{finalize.std_out.decode(errors='replace')} "
+                f"{finalize.std_err.decode(errors='replace')}")
+        return path
+
+    def _helper_bootstrap_works(self, path: str) -> bool:
+        script = (
+            f"if (!(Test-Path -LiteralPath {path!r})) {{ exit 10 }}\n"
+            f"$__helpers = Get-Content -Raw -LiteralPath {path!r}\n"
+            ". ([scriptblock]::Create($__helpers))\n"
+            "if (!(Get-Command Invoke-NativeWithTimeout -ErrorAction SilentlyContinue)) { exit 11 }\n"
+        )
+        return self._run_raw_ps(script).status_code == 0
+
+    def _embedded_helper_bootstrap_works(self) -> bool:
+        return self._run_raw_ps(
+            self._embedded_helper_prelude() +
+            "if (!(Get-Command Invoke-NativeWithTimeout -ErrorAction SilentlyContinue)) { exit 11 }\n"
+        ).status_code == 0
+
+    def _embedded_helper_prelude(self) -> str:
+        return (
+            f"$__helpersBytes = [Convert]::FromBase64String('{self._embedded_helpers_b64}')\n"
+            "$__helpersMs = New-Object IO.MemoryStream(,$__helpersBytes)\n"
+            "$__helpersGz = New-Object IO.Compression.GZipStream($__helpersMs, [IO.Compression.CompressionMode]::Decompress)\n"
+            "$__helpersReader = New-Object IO.StreamReader($__helpersGz, [Text.Encoding]::UTF8)\n"
+            "$__helpers = $__helpersReader.ReadToEnd()\n"
+            "$__helpersReader.Dispose(); $__helpersGz.Dispose(); $__helpersMs.Dispose()\n"
+            ". ([scriptblock]::Create($__helpers))\n"
+        )
+
+    def _helper_prelude(self) -> str:
+        if self._helper_mode == "embedded":
+            return self._embedded_helper_prelude()
+        return (
+            f"$__helpers = Get-Content -Raw -LiteralPath {self.helpers!r}\n"
+            ". ([scriptblock]::Create($__helpers))\n"
+        )
 
     @staticmethod
     def _json_output(response) -> dict | list:

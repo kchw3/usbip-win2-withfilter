@@ -11,6 +11,14 @@ Last updated: 2026-07-23
 - `test/config.ini` is ignored and lab-local. The Windows helper path currently points to:
   `C:\Users\User1\AppData\Local\Temp\usbip-filter-test-helpers.ps1`.
 - If `test/windows/helpers.ps1` changes, copy it to the configured Windows helper path before relying on helper behavior. Connectivity verifies the helper hash.
+- Runtime helper fallback is implemented:
+  - Linux: if configured `[linux] test_dir` is missing, deploy this checkout's
+    `test/linux/` to `/tmp/usbip-filter-test-linux-*` via SFTP, then via encoded
+    tarball if SFTP fails.
+  - Windows: if configured `helpers.ps1` is missing or not loadable, upload the
+    local helper to `%TEMP%\usbip-filter-test-helpers.ps1` in small encoded
+    chunks; if loading that copy fails, try encoded in-memory script-block
+    execution.
 
 ## Latest validated baseline
 
@@ -42,7 +50,7 @@ Last updated: 2026-07-23
     descriptor fetch are also covered.
 - Full suite with efficacy:
   - command: `pytest -q test --run-efficacy -ra --maxfail=1`
-  - result: `107 passed, 8 skipped in 1107.61s (0:18:27)`
+  - result: `107 passed, 8 skipped in 1174.05s (0:19:34)`
   - no failures, errors, or xfails.
 
 ## Expected skips and xfail

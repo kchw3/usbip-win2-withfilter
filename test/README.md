@@ -66,6 +66,10 @@ Windows client (a VM with snapshots is recommended):
 > The harness loads `helpers.ps1` by content (as a script block), so it works
 > even when PowerShell's execution policy is `Restricted`; no
 > `Set-ExecutionPolicy` change is required on the client.
+> If the configured Windows helper path is missing or not loadable, the runtime
+> fixture first uploads this checkout's `helpers.ps1` to the user's temp
+> directory in small encoded chunks and uses that copy. If that path cannot be
+> loaded, it makes one final encoded in-memory script-block attempt.
 
 > Prefer `dummy_hcd` for Tier A configfs gadgets:
 > `[linux] udc_name = dummy_udc.0` and `busid = auto`. The harness binds the
@@ -115,6 +119,11 @@ auto-fix.
 > gadget scripts and payloads from `test_dir`, not from your checkout, so a
 > forgotten re-deploy means you debug code that isn't running. If this test
 > fails, `git pull` here, re-`rsync` `test/linux/` to the server, and re-run.
+> At runtime, if the configured Linux `test_dir` is missing, the fixture tries to
+> deploy `test/linux/` to a user-writable `/tmp/usbip-filter-test-linux-*`
+> directory using SFTP; if that fails, it falls back to an encoded tarball
+> decoded on the server. This keeps test execution recoverable on fresh hosts,
+> while connectivity still reports configured-path drift explicitly.
 
 Full integration:
 ```

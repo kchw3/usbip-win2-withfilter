@@ -10,9 +10,9 @@ Last updated: 2026-07-23
   - Connectivity: `13 passed, 1 skipped`.
   - Full Tier A matrix: `56 passed`.
   - Full suite: `72 passed, 9 skipped`.
-  - Full suite with efficacy: `104 passed, 8 skipped`.
+  - Full suite with efficacy: `107 passed, 8 skipped`.
   - Tier B Raw Gadget canaries: `7 passed`.
-  - Tier B Raw Gadget robustness: `4 passed`.
+  - Tier B Raw Gadget robustness: `6 passed`.
 - Phase 0 Linux attribution is implemented: connectivity records kernel, USB/IP tool, module, configured UDC/busid, backend, and daemon mode.
 - Tier B Raw Gadget bring-up canaries are implemented and opt-in via
   `--run-tierb-canaries`. They now prove UDC naming, dead producer detection,
@@ -57,8 +57,13 @@ Last updated: 2026-07-23
    and limits. The production load/store sanitizer now has native coverage for
    wrong type/short length fail-closed behavior, count clamping by value length
    and capacity, and unknown-mode normalization to whitelist.
-9. Validate descriptor snapshots with a WDK `/WX` build and lab run.
-10. Add an opt-in hardware-backed efficacy lane through `usbip-host`.
+9. Completed: add reconnect and transport-interruption coverage. A denied attach
+   must not poison a later allowed attach after policy update, and a Raw Gadget
+   producer drop during configuration descriptor fetch must fail closed without
+   PnP exposure. True concurrent update/attach stress remains pending for a
+   deterministic lab hook.
+10. Validate descriptor snapshots with a WDK `/WX` build and lab run.
+11. Add an opt-in hardware-backed efficacy lane through `usbip-host`.
 
 ## Validation checklist
 

@@ -171,3 +171,26 @@ def test_transcript_records_transferred_lengths(tmp_path):
     assert resp["planned_len"] == 5
     assert resp["sent_len"] == 4
     assert resp["transferred"] == 4
+
+
+def test_transcript_records_handler_error_before_reraising(tmp_path):
+    events = [_ctrl(0x80, rg.GET_DESCRIPTOR, wv=0x0200, wl=9)]
+    gadget = _FakeGadget(events)
+    tx = rg.Transcript(str(tmp_path / "t.jsonl"), run_id="unit")
+
+    def boom(_req):
+        raise RuntimeError("synthetic drop")
+
+    try:
+        gadget.serve(boom, transcript=tx)
+    except RuntimeError:
+        pass
+    tx.close()
+
+    lines = (tmp_path / "t.jsonl").read_text().splitlines()
+    controls = [__import__("json").loads(ln) for ln in lines
+                if __import__("json").loads(ln)["event"] == "control"]
+    assert len(controls) == 1
+    assert controls[0]["request"]["descriptor_type"] == 0x02
+    assert controls[0]["response"]["action"] == "handler_error"
+    assert "synthetic drop" in controls[0]["response"]["error"]

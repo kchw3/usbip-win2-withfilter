@@ -330,7 +330,15 @@ class RawGadget:
     def _handle_control(
         self, req: ControlRequest, on_control: ControlHandler, tx: Transcript,
     ) -> None:
-        reply = on_control(req)
+        try:
+            reply = on_control(req)
+        except BaseException as e:
+            tx.record(
+                "control",
+                request=self._req_dict(req),
+                response={"action": "handler_error", "error": f"{type(e).__name__}: {e}"},
+            )
+            raise
 
         if reply is None and not req.is_in and req.bRequest == SET_CONFIGURATION:
             # Default handling so the gadget reaches the configured state.

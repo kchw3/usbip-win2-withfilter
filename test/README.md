@@ -130,7 +130,7 @@ check, Tier B Raw Gadget lab-bring-up checks, and efficacy tests when
 `--run-efficacy` was not supplied.
 
 With efficacy enabled on the same dummy_hcd baseline, the expected full-suite
-state is `104 passed, 8 skipped` with no failures or xfails. The skips are the
+state is `107 passed, 8 skipped` with no failures or xfails. The skips are the
 vUDC-only connectivity check and the opt-in Tier B canaries when
 `--run-tierb-canaries` is not supplied. The rogue-NIC negative control is
 satisfied by the RNDIS + Microsoft OS descriptor gadget (`rndis_os_nic`), which
@@ -155,11 +155,14 @@ Tier B robustness rows are active security gates:
 ```
 pytest test/test_robustness.py -v
 ```
-The current lab result is `4 passed in 41.15s`. This covers malformed
-descriptor fail-closed variants and descriptor TOCTOU. On the dummy_hcd lane,
-the TOCTOU profile serves four benign configuration responses first: two for
-local pre-export enumeration and two for the Windows filter snapshot. Any later
-changed configuration descriptor reaching Windows is treated as a bypass.
+The current lab result is `6 passed in 69.11s`. This covers malformed
+descriptor fail-closed variants, descriptor TOCTOU, reconnect after a denied
+attach plus policy update, and a transport-interruption case where the
+Raw Gadget producer drops during configuration descriptor fetch. On the
+dummy_hcd lane, the TOCTOU profile serves four benign configuration responses
+first: two for local pre-export enumeration and two for the Windows filter
+snapshot. Any later changed configuration descriptor reaching Windows is
+treated as a bypass.
 
 For the ordered follow-up plan, see [NEXT_STEPS_PLAN.md](NEXT_STEPS_PLAN.md).
 
@@ -298,6 +301,10 @@ completion and allows the benign Raw Gadget canary to attach through Windows.
   when no C++17 host compiler is available.
 - **test_robustness.py**
   - malformed descriptors must fail closed (deny + not enumerated),
+  - reconnect after policy update must work: a denied attach under deny-all must
+    not poison a later allowed attach against the same exported device,
+  - a producer/transport drop during configuration descriptor fetch must fail
+    closed with no VID/PID PnP exposure,
   - TOCTOU must not let Windows observe a descriptor set different from the one
     the filter accepted. The benign snapshot must attach successfully; the Raw
     Gadget transcript must show the filter's two identical configuration fetches

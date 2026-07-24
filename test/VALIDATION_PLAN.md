@@ -207,7 +207,11 @@ policy/deployment cannot satisfy a test oracle.
       limits in the production load/store sanitizer: wrong type/short length
       fail closed, stored counts clamp to value length and fixed capacity, and
       unknown modes normalize to whitelist rather than disabled.
-- [ ] Add concurrent update/attach, reconnect, and transport-interruption tests
+- [x] Add reconnect/transport-interruption coverage: a denied attach must not
+      poison a later allow after policy update, and a Raw Gadget producer drop
+      during configuration descriptor fetch must fail closed without PnP
+      exposure.
+- [ ] Add deterministic concurrent update/attach stress coverage
       (`load`/`store` in `device_filter.cpp` and attach lifetime paths).
 
 **Exit criterion:** malformed-input coverage runs quickly and deterministically in

@@ -34,13 +34,15 @@ Last updated: 2026-07-23
     benign Raw Gadget attach/PnP exposure through Windows.
 - Tier B Raw Gadget robustness:
   - command: `pytest -q test/test_robustness.py --maxfail=1 -ra`
-  - result: `4 passed in 41.15s`
-  - malformed descriptor rows are now active security gates; TOCTOU accounts for
+  - result: `6 passed in 69.11s`
+  - malformed descriptor rows are active security gates; TOCTOU accounts for
     dummy_hcd's two pre-export configuration fetches plus the filter's two
-    snapshot fetches before switching to the malicious descriptor.
+    snapshot fetches before switching to the malicious descriptor; reconnect
+    after denied attach/policy update and transport interruption during config
+    descriptor fetch are also covered.
 - Full suite with efficacy:
   - command: `pytest -q test --run-efficacy -ra --maxfail=1`
-  - result: `104 passed, 8 skipped in 1139.45s (0:18:59)`
+  - result: `107 passed, 8 skipped in 1107.61s (0:18:27)`
   - no failures, errors, or xfails.
 
 ## Expected skips and xfail
@@ -82,6 +84,9 @@ Last updated: 2026-07-23
 - Registry policy load/store sanitization is factored into an OS-free production
   helper so native tests can cover corrupted value type/length, count clamping,
   and unknown mode normalization without WDF registry dependencies.
+- Robustness coverage now includes attach lifetime checks for reconnect after a
+  denied attach/policy update, plus a Raw Gadget transport-interruption profile
+  that drops during configuration descriptor fetch.
 - Raw Gadget SET_CONFIGURATION handling uses `USB_RAW_IOCTL_CONFIGURE` followed
   by zero-length `EP0_READ`, matching OUT/no-data control completion. Using
   `EP0_WRITE` left dummy_hcd stuck at `can't set config #1, error -110` and
@@ -94,10 +99,10 @@ Raw Gadget robustness tests are active and validated, and HID efficacy currently
 passes with diagnostic fallback for endpoint-disabled regressions. Rogue-NIC
 efficacy now passes via the OS-descriptor-backed RNDIS lane. Rejection-event
 oracle hardening, network/vendor allow expansion, parser fuzz expansion, and
-native policy corruption/limit coverage are implemented. Next target:
-concurrent update/reconnect/transport interruption tests, WDK `/WX` descriptor
-snapshot validation, or the hardware-backed efficacy lane per
-`NEXT_STEPS_PLAN.md`.
+native policy corruption/limit coverage, reconnect-after-policy-update, and
+transport-interruption fail-closed coverage are implemented. Next target:
+deterministic concurrent update/attach stress, WDK `/WX` descriptor snapshot
+validation, or the hardware-backed efficacy lane per `NEXT_STEPS_PLAN.md`.
 
 ## Config knobs
 

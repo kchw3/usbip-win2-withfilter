@@ -15,8 +15,11 @@ import time
 
 import pytest
 
+from devices import DEVICES
+
 MALFORMED_PID = "03F1"
 TOCTOU_PID = "03F0"
+TRANSPORT_INTERRUPT_PID = "03F3"
 VID = "16C0"
 TOCTOU_BENIGN_CONFIG_RESPONSES = 4
 
@@ -67,6 +70,47 @@ def _served_config(transcript: list[dict]) -> bool:
                 and resp.get("action") == "write" and resp.get("transferred", 0) > 0):
             return True
     return False
+
+
+def _handler_error_on_config(transcript: list[dict]) -> bool:
+    for rec in transcript:
+        if rec.get("event") != "control":
+            continue
+        req = rec.get("request", {})
+        resp = rec.get("response", {})
+        if (req.get("bRequest") == 0x06 and req.get("descriptor_type") == 0x02
+                and resp.get("action") == "handler_error"):
+            return True
+    return False
+
+
+def test_policy_update_reconnect_after_denied_attach(linux, win):
+    """A denied attach must not poison a later attach after policy update.
+
+    This is a deterministic lifetime/reconnect regression check around
+    load/store + attach: first prove the exported HID is rejected under
+    deny-all with no PnP exposure, then update policy to allow HID and require a
+    fresh attach to succeed against the same exported device.
+    """
+    dev = DEVICES["hid_keyboard"]
+    linux.build_gadget(dev.gadget, vid=f"0x{VID}", pid=f"0x{dev.pid}")
+
+    win.set_policy(deny_all=True)
+    denied = win.attach_result(linux.busid)
+    assert not denied.ok, f"deny-all unexpectedly attached HID: {denied}"
+    assert not win.pnp_exposure(VID, dev.pid), (
+        "deny-all rejected attach but still exposed a VID/PID PnP node")
+
+    win.set_policy(allow=["hid"])
+    allowed = win.attach_result(linux.busid)
+    assert allowed.ok, (
+        "HID attach did not recover after denied attach and policy update: "
+        f"denied={denied}; allowed={allowed}")
+    deadline = time.time() + 15.0
+    while time.time() < deadline and not win.pnp_present(VID, dev.pid):
+        time.sleep(1.0)
+    assert win.pnp_present(VID, dev.pid), (
+        "HID attach succeeded after policy update but did not enumerate")
 
 
 @pytest.mark.parametrize("variant", MALFORMED_VARIANTS)
@@ -145,6 +189,38 @@ def test_descriptor_toctou_no_bypass(linux, win):
     finally:
         log = linux.stop_raw_gadget(run)
         print(f"[server log:toctou]\n{log}")
+
+
+def test_transport_interruption_fails_closed(linux, win):
+    """A producer drop during descriptor fetch must fail closed.
+
+    The profile serves the device descriptor and then crashes on the first
+    configuration descriptor request. That models a USB/IP transport/server
+    interruption after import identity is visible but before the filter has a
+    complete configuration snapshot.
+    """
+    win.set_policy(allow=["hid", "mass_storage", "network", "vendor"])
+    run = linux.start_raw_gadget(
+        "transport_interrupt",
+        expected_vid=VID,
+        expected_pid=TRANSPORT_INTERRUPT_PID,
+        env={"CONFIG_REQUESTS_BEFORE_DROP": "2"},
+    )
+    try:
+        attach = win.attach_result(linux.busid)
+        assert not attach.ok, (
+            "transport interruption unexpectedly attached; filter must fail "
+            f"closed before PnP exposure: {attach}")
+        assert not win.pnp_exposure(VID, TRANSPORT_INTERRUPT_PID), (
+            "transport interruption exposed a VID/PID PnP node")
+
+        transcript = linux.read_raw_transcript(run)
+        assert _handler_error_on_config(transcript), (
+            "transport interruption stimulus did not reach the configuration "
+            f"descriptor request; transcript={transcript}")
+    finally:
+        log = linux.stop_raw_gadget(run)
+        print(f"[server log:transport_interrupt]\n{log}")
 
 
 def _configuration_responses(transcript: list[dict]) -> list[str]:

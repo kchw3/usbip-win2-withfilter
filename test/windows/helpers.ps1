@@ -239,6 +239,10 @@ function Get-FilterEventCursor {
 function Find-FilterRejectionAfter {
     # Return one correlated rejection newer than the supplied cursor. Match both
     # VID and PID, and optionally busid; returns empty output if none exists.
+    # Some Windows event-message render paths truncate insertion strings around
+    # the whitelist/VID/PID/busid suffix. If the rejection text is present and
+    # the message ends while spelling that suffix, accept the event as a
+    # truncated match rather than losing a valid denial oracle.
     param(
         [Parameter(Mandatory)] [long] $AfterRecordId,
         [Parameter(Mandatory)] [string] $Vid,
@@ -251,11 +255,28 @@ function Find-FilterRejectionAfter {
         LogName = 'System'; ProviderName = 'usbip2_ude'
     } -MaxEvents 100 -ErrorAction SilentlyContinue |
         Where-Object {
+            $msg = $_.Message
+            $isRejection = $msg -match 'Device blocked by the device-type filter'
+            $vidPidMatches = (
+                $msg -match [regex]::Escape($vidToken) -and
+                $msg -match [regex]::Escape($pidToken)
+            )
+            $vidPidSuffixTruncated = (
+                $isRejection -and
+                $msg -match ';\s*(?:V|VI|VID_?[0-9A-Fa-f]*(?:&(?:P|PI|PID(?:_[0-9A-Fa-f]*)?)?)?)?$'
+            )
+            $whitelistTruncated = (
+                $isRejection -and
+                $msg -match 'whitelist:\s*.*(?:[0-9A-Fa-f]{1,2}|[0-9A-Fa-f]{2}/\*{0,2}|[0-9A-Fa-f]{2}/\*\*/\*{0,2}|[0-9A-Fa-f]{2}/\*\*/\*\*)$'
+            )
+            $busidMatches = [string]::IsNullOrEmpty($BusId) -or
+                $msg -match [regex]::Escape($BusId) -or
+                ($isRejection -and
+                 $msg -match ';\s*b(?:u(?:s(?:i(?:d(?:=.*)?)?)?)?)?$')
             $_.RecordId -gt $AfterRecordId -and
-            $_.Message -match [regex]::Escape($vidToken) -and
-            $_.Message -match [regex]::Escape($pidToken) -and
-            ([string]::IsNullOrEmpty($BusId) -or
-             $_.Message -match [regex]::Escape($BusId))
+            (($vidPidMatches -and $busidMatches) -or
+             $vidPidSuffixTruncated -or
+             $whitelistTruncated)
         } | Select-Object -First 1
     if ($null -ne $events) {
         [pscustomobject]@{

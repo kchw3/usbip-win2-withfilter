@@ -70,6 +70,10 @@ Windows client (a VM with snapshots is recommended):
 > fixture first uploads this checkout's `helpers.ps1` to the user's temp
 > directory in small encoded chunks and uses that copy. If that path cannot be
 > loaded, it makes one final encoded in-memory script-block attempt.
+> Rejection-event correlation still requires a fresh `usbip2_ude` System event
+> after the per-row cursor. If the Windows event renderer truncates the message
+> while spelling the whitelist or VID/PID/busid suffix, the helper accepts that
+> specific suffix truncation rather than a stale event.
 
 > Prefer `dummy_hcd` for Tier A configfs gadgets:
 > `[linux] udc_name = dummy_udc.0` and `busid = auto`. The harness binds the
@@ -131,12 +135,10 @@ pytest test/ -v
 ```
 
 Current validated baseline for Tier A is `dummy_hcd` with `[linux] udc_name =
-dummy_udc.0` and `busid = auto`. On 2026-07-23, connectivity passed
-(`13 passed, 1 skipped`), the full Tier A matrix passed (`56 passed`), and the
-standard full suite passed (`72 passed, 9 skipped`) before Linux manifest
-recording was added. The skipped tests were the expected vUDC-only connectivity
-check, Tier B Raw Gadget lab-bring-up checks, and efficacy tests when
-`--run-efficacy` was not supplied.
+dummy_udc.0` and `busid = auto`. On 2026-07-24, the WDK-built snapshot passed
+the full Tier A matrix (`56 passed in 962.90s`) and the full efficacy suite
+(`111 passed, 8 skipped in 1170.08s`). The skipped tests were the expected
+vUDC-only connectivity check and the opt-in Tier B canaries.
 
 With efficacy enabled on the same dummy_hcd baseline, the expected full-suite
 state is `111 passed, 8 skipped` with no failures or xfails. The skips are the

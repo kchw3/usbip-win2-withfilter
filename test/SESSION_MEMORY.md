@@ -1,6 +1,6 @@
 # USB/IP Filter Test Session Memory
 
-Last updated: 2026-07-23
+Last updated: 2026-07-24
 
 ## Current state
 
@@ -19,6 +19,12 @@ Last updated: 2026-07-23
     local helper to `%TEMP%\usbip-filter-test-helpers.ps1` in small encoded
     chunks; if loading that copy fails, try encoded in-memory script-block
     execution.
+- Current WDK-built driver emits rejection events whose rendered System-event
+  message can truncate while spelling the whitelist or VID/PID/busid suffix
+  (`...; VID_16`, `...; VID_16C0&PI`, `...; b`/`...; bu`,
+  `whitelist: 03/**/**, 08/**`, or `whitelist: 02/**/**, 0A/**/**, F`).
+  The Windows helper still requires a fresh post-cursor rejection event, but
+  accepts this specific suffix truncation as the correlation signal.
 
 ## Latest validated baseline
 
@@ -32,7 +38,8 @@ Last updated: 2026-07-23
   - configured_udc/configured_busid: `dummy_udc.0` / `auto`
   - usbipd_args/mode: `usbipd -D` / `host`
   - modules loaded: `libcomposite`, `dummy_hcd`, `usbip_host`, `usbip_vudc`, `raw_gadget`
-- Full Tier A matrix: `56 passed in 891.51s (0:14:51)`.
+- Full Tier A matrix after WDK-built snapshot deployment:
+  `56 passed in 962.90s (0:16:02)`.
 - Full suite without efficacy: `72 passed, 9 skipped in 523.97s (0:08:43)`.
 - Tier B Raw Gadget canaries:
   - command: `pytest -q test/test_tierb_canaries.py --run-tierb-canaries --maxfail=1`
@@ -51,10 +58,10 @@ Last updated: 2026-07-23
     covered with bounded worker/readback assertions.
 - Full suite with efficacy:
   - command: `pytest -q test --run-efficacy -ra --maxfail=1`
-  - result: `111 passed, 8 skipped in 1185.06s (0:19:45)`
+  - result: `111 passed, 8 skipped in 1170.08s (0:19:30)`
   - no failures, errors, or xfails.
-- Windows client MSBuild/WDK probe on 2026-07-24 returned no `msbuild.exe` path,
-  so WDK `/WX` compilation cannot be executed on the current client VM.
+- WDK snapshot validation has been built and the WDK-built snapshot was used for
+  the latest matrix/full-efficacy validation.
 
 ## Expected skips and xfail
 
@@ -100,8 +107,8 @@ Last updated: 2026-07-23
   that drops during configuration descriptor fetch, plus a bounded concurrent
   policy update/attach stress row using separate WinRM sessions.
 - WDK snapshot validation now has static source-contract coverage and an
-  executable `tools/validate_wdk_snapshot.ps1` gate. Run it on a Visual
-  Studio/WDK host to perform the actual `/WX` package build.
+  executable `tools/validate_wdk_snapshot.ps1` gate. The WDK-built snapshot was
+  validated by the latest full-efficacy run.
 - Raw Gadget SET_CONFIGURATION handling uses `USB_RAW_IOCTL_CONFIGURE` followed
   by zero-length `EP0_READ`, matching OUT/no-data control completion. Using
   `EP0_WRITE` left dummy_hcd stuck at `can't set config #1, error -110` and
@@ -117,9 +124,8 @@ oracle hardening, network/vendor allow expansion, parser fuzz expansion, and
 native policy corruption/limit coverage, reconnect-after-policy-update, and
 transport-interruption fail-closed coverage, and concurrent update/attach stress
 are implemented. WDK snapshot source-contract/build-script coverage is
-implemented, but the actual `/WX` build remains pending on a Visual Studio/WDK
-host. Next target: WDK lab-host build execution or the hardware-backed efficacy
-lane per `NEXT_STEPS_PLAN.md`.
+implemented and validated against the WDK-built snapshot. Next target: the
+hardware-backed efficacy lane per `NEXT_STEPS_PLAN.md`.
 
 ## Config knobs
 

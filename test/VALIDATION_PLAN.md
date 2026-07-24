@@ -203,8 +203,12 @@ policy/deployment cannot satisfy a test oracle.
 - [x] Extend fuzz coverage to IAD and class-specific descriptors, excessive
       counts/lengths, long unknown descriptors, non-contiguous interface numbers,
       and subclass/protocol match predicates.
-- [ ] Add registry/policy corruption, limits, concurrent update/attach, reconnect,
-      and transport-interruption tests (`load`/`store` in `device_filter.cpp`).
+- [x] Add deterministic native coverage for registry policy corruption and
+      limits in the production load/store sanitizer: wrong type/short length
+      fail closed, stored counts clamp to value length and fixed capacity, and
+      unknown modes normalize to whitelist rather than disabled.
+- [ ] Add concurrent update/attach, reconnect, and transport-interruption tests
+      (`load`/`store` in `device_filter.cpp` and attach lifetime paths).
 
 **Exit criterion:** malformed-input coverage runs quickly and deterministically in
 CI, while integration tests cover only kernel/transport/enforcement wiring.

@@ -4,6 +4,7 @@
 
 #include "device_filter.h"
 #include "device_filter_parser.h"
+#include "device_filter_policy.h"
 #include "descriptor_patch.h"
 #include "trace.h"
 #include "device_filter.tmh"
@@ -498,9 +499,7 @@ PAGED void usbip::device_filter::load(_Out_ policy &p)
 {
         PAGED_CODE();
 
-        RtlZeroMemory(&p, sizeof(p));
-        p.mode = vhci::filter_mode::whitelist; // fail-closed default: empty whitelist denies all
-        p.count = 0;
+        make_fail_closed_policy(p, vhci::filter_mode::whitelist);
 
         Registry key;
         if (auto err = open(key, DriverRegKeyParameters)) {
@@ -521,26 +520,13 @@ PAGED void usbip::device_filter::load(_Out_ policy &p)
                 return;
         }
 
-        if (type != REG_BINARY || actual < FIELD_OFFSET(policy, entries)) {
+        auto status = sanitize_loaded_policy(p, tmp, actual, type, REG_BINARY,
+                vhci::filter_mode::disabled, vhci::filter_mode::whitelist);
+        if (status == policy_value_status::bad_type_or_size) {
                 Trace(TRACE_LEVEL_WARNING, "'%!USTR!' has bad type/size (type %lu, %lu bytes), fail-closed",
                         &name, type, actual);
                 return;
         }
-
-        auto max_by_len = (actual - FIELD_OFFSET(policy, entries)) / sizeof(vhci::device_filter_entry);
-        auto count = tmp.count;
-
-        if (count > max_by_len) {
-                count = static_cast<ULONG>(max_by_len);
-        }
-        if (count > vhci::ioctl::MAX_DEVICE_FILTER_ENTRIES) {
-                count = vhci::ioctl::MAX_DEVICE_FILTER_ENTRIES;
-        }
-
-        p.mode = (tmp.mode == vhci::filter_mode::disabled) ? vhci::filter_mode::disabled
-                                                           : vhci::filter_mode::whitelist;
-        p.count = count;
-        RtlCopyMemory(p.entries, tmp.entries, count * sizeof(vhci::device_filter_entry));
 
         Trace(TRACE_LEVEL_INFORMATION, "device-type filter loaded: mode %d, %lu entries",
                 static_cast<int>(p.mode), p.count);
@@ -552,13 +538,8 @@ PAGED NTSTATUS usbip::device_filter::store(_In_ const policy &p)
 {
         PAGED_CODE();
 
-        policy tmp = p;
-        if (tmp.count > vhci::ioctl::MAX_DEVICE_FILTER_ENTRIES) {
-                tmp.count = vhci::ioctl::MAX_DEVICE_FILTER_ENTRIES;
-        }
-        if (tmp.mode != vhci::filter_mode::disabled) {
-                tmp.mode = vhci::filter_mode::whitelist;
-        }
+        auto tmp = sanitize_policy_for_store(p,
+                vhci::filter_mode::disabled, vhci::filter_mode::whitelist);
 
         Registry key;
         if (auto err = open(key, DriverRegKeyParameters, KEY_SET_VALUE)) {
@@ -566,8 +547,7 @@ PAGED NTSTATUS usbip::device_filter::store(_In_ const policy &p)
         }
 
         auto name = value_name();
-        auto len = static_cast<ULONG>(FIELD_OFFSET(policy, entries) +
-                                      tmp.count * sizeof(vhci::device_filter_entry));
+        auto len = static_cast<ULONG>(serialized_policy_size<policy>(tmp.count));
 
         auto st = WdfRegistryAssignValue(key.get(), &name, REG_BINARY, len, &tmp);
         if (st) {

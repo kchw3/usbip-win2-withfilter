@@ -19,12 +19,13 @@ test/
   conftest.py           # pytest fixtures (SSH to Linux, WinRM to Windows)
   config.example.ini    # copy to config.ini (gitignored) and fill in
   test_descriptors.py   # pure unit tests: Python builders + decision model
-  test_parser_native.py # compiles + runs the PRODUCTION C++ parser (unit + fuzz)
+  test_parser_native.py # compiles + runs PRODUCTION C++ parser/policy native tests
   test_connectivity.py  # sanity-checks the config.ini wiring (SSH/WinRM/UDC/port)
   test_matrix.py        # integration: policy x device decision matrix (filter ON)
   test_robustness.py    # integration: attacks #9 (malformed) and #10 (TOCTOU)
   test_attack_efficacy.py # negative control: attacks really work (filter OFF)
   native/parser_fuzz.cpp # host driver that #includes device_filter_parser.h
+  native/policy_serialization.cpp # host driver for policy load/store sanitizer
   linux/
     gadget_lib.sh       # configfs/libcomposite helpers + usbip export + payload seed
     gadgets/*.sh        # Tier A device builders (hid, ms, composite, cdc, ...)
@@ -129,7 +130,7 @@ check, Tier B Raw Gadget lab-bring-up checks, and efficacy tests when
 `--run-efficacy` was not supplied.
 
 With efficacy enabled on the same dummy_hcd baseline, the expected full-suite
-state is `103 passed, 8 skipped` with no failures or xfails. The skips are the
+state is `104 passed, 8 skipped` with no failures or xfails. The skips are the
 vUDC-only connectivity check and the opt-in Tier B canaries when
 `--run-tierb-canaries` is not supplied. The rogue-NIC negative control is
 satisfied by the RNDIS + Microsoft OS descriptor gadget (`rndis_os_nic`), which
@@ -286,12 +287,14 @@ completion and allows the benign Raw Gadget canary to attach through Windows.
   3. **event log** — a cursor (`RecordId`) is taken immediately before attach and
      the rejection must be **newer** than it and match VID *and* PID *and* busid,
      so a stale event with the same PID cannot satisfy the oracle.
-- **test_parser_native.py** — compiles `test/native/parser_fuzz.cpp`, which
-  `#include`s the driver's own `drivers/ude/device_filter_parser.h`, and runs it.
-  This tests the *production* parser (not a Python re-implementation) against
-  malformed/inconsistent descriptors plus a 50k-iteration property fuzz that
-  asserts the parser never accepts a device unless every interface is allowed and
-  `bNumInterfaces` matches the distinct interfaces actually present. Skipped only
+- **test_parser_native.py** — compiles native harnesses that `#include` the
+  driver's own OS-free production helpers. `parser_fuzz.cpp` tests
+  `drivers/ude/device_filter_parser.h` against malformed/inconsistent
+  descriptors plus a 50k-iteration property fuzz that asserts the parser never
+  accepts a device unless every interface is allowed and `bNumInterfaces`
+  matches the distinct interfaces actually present. `policy_serialization.cpp`
+  tests `drivers/ude/device_filter_policy.h`, including corrupted registry
+  value type/length, count clamping, and unknown-mode normalization. Skipped only
   when no C++17 host compiler is available.
 - **test_robustness.py**
   - malformed descriptors must fail closed (deny + not enumerated),
@@ -334,7 +337,8 @@ completion and allows the benign Raw Gadget canary to attach through Windows.
   deterministically: the parser (`device_filter_parser.h`) rejects a
   zero-interface configuration, a `bNumInterfaces` that disagrees with the
   interface descriptors actually present, length/`wTotalLength` inconsistencies,
-  and trailing partial descriptors. `test_parser_native.py` pins this behaviour.
+  and trailing partial descriptors. `test_parser_native.py` pins this behaviour
+  and also pins fail-closed registry policy sanitization.
 - The TOCTOU case still probes genuinely uncertain end-to-end behaviour; a
   failure there is a real finding to file, not a flaky test.
 - **HID keystroke injection is currently live on the dummy_hcd lane.**

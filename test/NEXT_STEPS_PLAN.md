@@ -10,7 +10,7 @@ Last updated: 2026-07-23
   - Connectivity: `13 passed, 1 skipped`.
   - Full Tier A matrix: `56 passed`.
   - Full suite: `72 passed, 9 skipped`.
-  - Full suite with efficacy: `103 passed, 8 skipped`.
+  - Full suite with efficacy: `104 passed, 8 skipped`.
   - Tier B Raw Gadget canaries: `7 passed`.
   - Tier B Raw Gadget robustness: `4 passed`.
 - Phase 0 Linux attribution is implemented: connectivity records kernel, USB/IP tool, module, configured UDC/busid, backend, and daemon mode.
@@ -53,8 +53,12 @@ Last updated: 2026-07-23
 7. Completed: extend native parser fuzz coverage for IAD/class-specific
    descriptors, non-contiguous and high-count interface numbers, long unknown
    descriptors, inflated lengths, and subclass/protocol predicates.
-8. Validate descriptor snapshots with a WDK `/WX` build and lab run.
-9. Add an opt-in hardware-backed efficacy lane through `usbip-host`.
+8. Completed: add deterministic native coverage for registry policy corruption
+   and limits. The production load/store sanitizer now has native coverage for
+   wrong type/short length fail-closed behavior, count clamping by value length
+   and capacity, and unknown-mode normalization to whitelist.
+9. Validate descriptor snapshots with a WDK `/WX` build and lab run.
+10. Add an opt-in hardware-backed efficacy lane through `usbip-host`.
 
 ## Validation checklist
 

@@ -139,7 +139,7 @@ check, Tier B Raw Gadget lab-bring-up checks, and efficacy tests when
 `--run-efficacy` was not supplied.
 
 With efficacy enabled on the same dummy_hcd baseline, the expected full-suite
-state is `108 passed, 8 skipped` with no failures or xfails. The skips are the
+state is `111 passed, 8 skipped` with no failures or xfails. The skips are the
 vUDC-only connectivity check and the opt-in Tier B canaries when
 `--run-tierb-canaries` is not supplied. The rogue-NIC negative control is
 satisfied by the RNDIS + Microsoft OS descriptor gadget (`rndis_os_nic`), which

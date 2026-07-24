@@ -51,8 +51,10 @@ Last updated: 2026-07-23
     covered with bounded worker/readback assertions.
 - Full suite with efficacy:
   - command: `pytest -q test --run-efficacy -ra --maxfail=1`
-  - result: `108 passed, 8 skipped in 1223.76s (0:20:23)`
+  - result: `111 passed, 8 skipped in 1185.06s (0:19:45)`
   - no failures, errors, or xfails.
+- Windows client MSBuild/WDK probe on 2026-07-24 returned no `msbuild.exe` path,
+  so WDK `/WX` compilation cannot be executed on the current client VM.
 
 ## Expected skips and xfail
 
@@ -97,6 +99,9 @@ Last updated: 2026-07-23
   denied attach/policy update, plus a Raw Gadget transport-interruption profile
   that drops during configuration descriptor fetch, plus a bounded concurrent
   policy update/attach stress row using separate WinRM sessions.
+- WDK snapshot validation now has static source-contract coverage and an
+  executable `tools/validate_wdk_snapshot.ps1` gate. Run it on a Visual
+  Studio/WDK host to perform the actual `/WX` package build.
 - Raw Gadget SET_CONFIGURATION handling uses `USB_RAW_IOCTL_CONFIGURE` followed
   by zero-length `EP0_READ`, matching OUT/no-data control completion. Using
   `EP0_WRITE` left dummy_hcd stuck at `can't set config #1, error -110` and
@@ -111,8 +116,10 @@ efficacy now passes via the OS-descriptor-backed RNDIS lane. Rejection-event
 oracle hardening, network/vendor allow expansion, parser fuzz expansion, and
 native policy corruption/limit coverage, reconnect-after-policy-update, and
 transport-interruption fail-closed coverage, and concurrent update/attach stress
-are implemented. Next target: WDK `/WX` descriptor snapshot validation or the
-hardware-backed efficacy lane per `NEXT_STEPS_PLAN.md`.
+are implemented. WDK snapshot source-contract/build-script coverage is
+implemented, but the actual `/WX` build remains pending on a Visual Studio/WDK
+host. Next target: WDK lab-host build execution or the hardware-backed efficacy
+lane per `NEXT_STEPS_PLAN.md`.
 
 ## Config knobs
 

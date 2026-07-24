@@ -241,10 +241,14 @@ CI, while integration tests cover only kernel/transport/enforcement wiring.
       response is a bypass. (`test_descriptor_toctou_no_bypass`)
 - [x] Use the deterministic Raw Gadget responder for protocol-level mutation
       tests (implemented Phase 1; still awaiting lab bring-up before un-skip).
-- [ ] **Lab/build validation:** compile the WDK driver with `/WX`; confirm UdeCx
-      accepts indexed configuration snapshots with dynamic endpoints; run the
-      Tier B TOCTOU test and confirm Windows makes no later remote configuration
-      request. The design/code path is complete but this host lacks WDK/lab.
+- [x] Add an executable WDK snapshot validation gate. Static CI pins the source
+      contract and `tools/validate_wdk_snapshot.ps1`; a Visual Studio/WDK host
+      runs that script to build `drivers/package/package.vcxproj` with `/WX`.
+- [ ] **Lab/build validation:** run `tools/validate_wdk_snapshot.ps1` on a
+      Visual Studio/WDK host; confirm UdeCx accepts indexed configuration
+      snapshots with dynamic endpoints; run the Tier B TOCTOU test and confirm
+      Windows makes no later remote configuration request. The current Windows
+      client has no MSBuild/WDK path, so this remains a lab-host step.
 - [ ] Extend snapshot scope if the threat model requires immutable BOS/string/
       class-specific descriptors; current security boundary freezes device + all
       configuration/interface/endpoint descriptors (the class-filter inputs).

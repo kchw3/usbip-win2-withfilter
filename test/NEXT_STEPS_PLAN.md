@@ -10,7 +10,7 @@ Last updated: 2026-07-23
   - Connectivity: `13 passed, 1 skipped`.
   - Full Tier A matrix: `56 passed`.
   - Full suite: `72 passed, 9 skipped`.
-  - Full suite with efficacy: `108 passed, 8 skipped`.
+  - Full suite with efficacy: `111 passed, 8 skipped`.
   - Tier B Raw Gadget canaries: `7 passed`.
   - Tier B Raw Gadget robustness: `7 passed`.
 - Phase 0 Linux attribution is implemented: connectivity records kernel, USB/IP tool, module, configured UDC/busid, backend, and daemon mode.
@@ -64,7 +64,9 @@ Last updated: 2026-07-23
 10. Completed: add deterministic concurrent update/attach stress coverage. A
    bounded stress row races policy load/store readbacks against repeated attach
    attempts and asserts no worker hangs/errors or malformed attach results.
-11. Validate descriptor snapshots with a WDK `/WX` build and lab run.
+11. In progress: validate descriptor snapshots with a WDK `/WX` build and lab
+   run. Static source-contract coverage and the executable WDK build script are
+   implemented; running the script still requires a Visual Studio/WDK host.
 12. Add an opt-in hardware-backed efficacy lane through `usbip-host`.
 
 ## Validation checklist

@@ -42,15 +42,16 @@ Last updated: 2026-07-23
     benign Raw Gadget attach/PnP exposure through Windows.
 - Tier B Raw Gadget robustness:
   - command: `pytest -q test/test_robustness.py --maxfail=1 -ra`
-  - result: `6 passed in 69.11s`
+  - result: `7 passed in 95.11s`
   - malformed descriptor rows are active security gates; TOCTOU accounts for
     dummy_hcd's two pre-export configuration fetches plus the filter's two
     snapshot fetches before switching to the malicious descriptor; reconnect
     after denied attach/policy update and transport interruption during config
-    descriptor fetch are also covered.
+    descriptor fetch are covered; concurrent policy update/attach stress is
+    covered with bounded worker/readback assertions.
 - Full suite with efficacy:
   - command: `pytest -q test --run-efficacy -ra --maxfail=1`
-  - result: `107 passed, 8 skipped in 1174.05s (0:19:34)`
+  - result: `108 passed, 8 skipped in 1223.76s (0:20:23)`
   - no failures, errors, or xfails.
 
 ## Expected skips and xfail
@@ -94,7 +95,8 @@ Last updated: 2026-07-23
   and unknown mode normalization without WDF registry dependencies.
 - Robustness coverage now includes attach lifetime checks for reconnect after a
   denied attach/policy update, plus a Raw Gadget transport-interruption profile
-  that drops during configuration descriptor fetch.
+  that drops during configuration descriptor fetch, plus a bounded concurrent
+  policy update/attach stress row using separate WinRM sessions.
 - Raw Gadget SET_CONFIGURATION handling uses `USB_RAW_IOCTL_CONFIGURE` followed
   by zero-length `EP0_READ`, matching OUT/no-data control completion. Using
   `EP0_WRITE` left dummy_hcd stuck at `can't set config #1, error -110` and
@@ -108,9 +110,9 @@ passes with diagnostic fallback for endpoint-disabled regressions. Rogue-NIC
 efficacy now passes via the OS-descriptor-backed RNDIS lane. Rejection-event
 oracle hardening, network/vendor allow expansion, parser fuzz expansion, and
 native policy corruption/limit coverage, reconnect-after-policy-update, and
-transport-interruption fail-closed coverage are implemented. Next target:
-deterministic concurrent update/attach stress, WDK `/WX` descriptor snapshot
-validation, or the hardware-backed efficacy lane per `NEXT_STEPS_PLAN.md`.
+transport-interruption fail-closed coverage, and concurrent update/attach stress
+are implemented. Next target: WDK `/WX` descriptor snapshot validation or the
+hardware-backed efficacy lane per `NEXT_STEPS_PLAN.md`.
 
 ## Config knobs
 

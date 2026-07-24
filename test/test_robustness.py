@@ -11,10 +11,13 @@ Run: pytest test/test_robustness.py -v
 
 from __future__ import annotations
 
+import queue
+import threading
 import time
 
 import pytest
 
+from conftest import WindowsClient
 from devices import DEVICES
 
 MALFORMED_PID = "03F1"
@@ -111,6 +114,74 @@ def test_policy_update_reconnect_after_denied_attach(linux, win):
         time.sleep(1.0)
     assert win.pnp_present(VID, dev.pid), (
         "HID attach succeeded after policy update but did not enumerate")
+
+
+def test_concurrent_policy_update_attach_stress(config, linux, win):
+    """Policy load/store must tolerate attach attempts racing policy updates.
+
+    This is intentionally a stress/lifetime oracle rather than a row-by-row
+    allow/deny oracle: when attach and policy mutation overlap, either attach
+    result can be legitimate depending on which policy snapshot the driver
+    loaded. The deterministic assertions are that all operations stay bounded,
+    policy readbacks remain coherent, both policy modes are exercised, and the
+    attach path returns structured results instead of hanging or crashing.
+    """
+    dev = DEVICES["hid_keyboard"]
+    linux.build_gadget(dev.gadget, vid=f"0x{VID}", pid=f"0x{dev.pid}")
+    win.set_policy(deny_all=True)
+
+    errors: "queue.Queue[str]" = queue.Queue()
+    stop = threading.Event()
+    policy_states = []
+    attach_results = []
+
+    def policy_worker() -> None:
+        client = WindowsClient(config)
+        try:
+            for i in range(10):
+                if i % 2:
+                    policy_states.append(client.set_policy(allow=["hid"]))
+                else:
+                    policy_states.append(client.set_policy(deny_all=True))
+                time.sleep(0.2)
+        except BaseException as exc:  # noqa: BLE001 - report thread failures
+            errors.put(f"policy worker failed: {type(exc).__name__}: {exc}")
+        finally:
+            stop.set()
+
+    def attach_worker() -> None:
+        client = WindowsClient(config)
+        deadline = time.time() + 20.0
+        try:
+            while not stop.is_set() and time.time() < deadline:
+                attach_results.append(client.attach_result(linux.busid))
+                time.sleep(0.25)
+        except BaseException as exc:  # noqa: BLE001
+            errors.put(f"attach worker failed: {type(exc).__name__}: {exc}")
+            stop.set()
+
+    threads = [
+        threading.Thread(target=policy_worker, name="policy-update-stress"),
+        threading.Thread(target=attach_worker, name="attach-stress"),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30.0)
+
+    stop.set()
+    stuck = [thread.name for thread in threads if thread.is_alive()]
+    assert not stuck, f"concurrent policy/attach worker(s) hung: {stuck}"
+    assert errors.empty(), "\n".join(list(errors.queue))
+    assert len(policy_states) == 10, f"policy worker did not complete: {policy_states}"
+    assert {state.mode for state in policy_states} == {"whitelist"}, policy_states
+    assert any(not state.categories for state in policy_states), policy_states
+    assert any(state.categories == ("hid",) for state in policy_states), policy_states
+    assert attach_results, "attach worker never executed an attach attempt"
+    assert all(isinstance(result.exit_code, int) for result in attach_results), (
+        f"attach worker returned malformed result(s): {attach_results}")
+
+    win.set_policy(deny_all=True)
 
 
 @pytest.mark.parametrize("variant", MALFORMED_VARIANTS)

@@ -211,8 +211,11 @@ policy/deployment cannot satisfy a test oracle.
       poison a later allow after policy update, and a Raw Gadget producer drop
       during configuration descriptor fetch must fail closed without PnP
       exposure.
-- [ ] Add deterministic concurrent update/attach stress coverage
-      (`load`/`store` in `device_filter.cpp` and attach lifetime paths).
+- [x] Add deterministic concurrent update/attach stress coverage: separate
+      WinRM sessions race coherent policy readbacks against repeated attach
+      attempts, with bounded worker timeouts and structured attach-result
+      assertions (`load`/`store` in `device_filter.cpp` and attach lifetime
+      paths).
 
 **Exit criterion:** malformed-input coverage runs quickly and deterministically in
 CI, while integration tests cover only kernel/transport/enforcement wiring.

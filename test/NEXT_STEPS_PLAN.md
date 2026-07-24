@@ -10,9 +10,9 @@ Last updated: 2026-07-23
   - Connectivity: `13 passed, 1 skipped`.
   - Full Tier A matrix: `56 passed`.
   - Full suite: `72 passed, 9 skipped`.
-  - Full suite with efficacy: `107 passed, 8 skipped`.
+  - Full suite with efficacy: `108 passed, 8 skipped`.
   - Tier B Raw Gadget canaries: `7 passed`.
-  - Tier B Raw Gadget robustness: `6 passed`.
+  - Tier B Raw Gadget robustness: `7 passed`.
 - Phase 0 Linux attribution is implemented: connectivity records kernel, USB/IP tool, module, configured UDC/busid, backend, and daemon mode.
 - Tier B Raw Gadget bring-up canaries are implemented and opt-in via
   `--run-tierb-canaries`. They now prove UDC naming, dead producer detection,
@@ -60,10 +60,12 @@ Last updated: 2026-07-23
 9. Completed: add reconnect and transport-interruption coverage. A denied attach
    must not poison a later allowed attach after policy update, and a Raw Gadget
    producer drop during configuration descriptor fetch must fail closed without
-   PnP exposure. True concurrent update/attach stress remains pending for a
-   deterministic lab hook.
-10. Validate descriptor snapshots with a WDK `/WX` build and lab run.
-11. Add an opt-in hardware-backed efficacy lane through `usbip-host`.
+   PnP exposure.
+10. Completed: add deterministic concurrent update/attach stress coverage. A
+   bounded stress row races policy load/store readbacks against repeated attach
+   attempts and asserts no worker hangs/errors or malformed attach results.
+11. Validate descriptor snapshots with a WDK `/WX` build and lab run.
+12. Add an opt-in hardware-backed efficacy lane through `usbip-host`.
 
 ## Validation checklist
 

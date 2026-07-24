@@ -1,6 +1,6 @@
 # USB/IP Filter Validation Next Steps
 
-Last updated: 2026-07-23
+Last updated: 2026-07-24
 
 ## Current baseline
 
@@ -41,7 +41,7 @@ Last updated: 2026-07-23
 5. Completed: add an OS-descriptor-backed RNDIS network efficacy lane
    (`rndis_os_nic`) so the rogue-NIC negative control proves a live
    VID/PID-matched `Net` child on this client.
-6. Harden remaining oracles:
+6. Completed: harden remaining oracles:
    - completed: rejection events now assert fail-closed reason and source
      context on the current deployed driver; the driver source event contract now
      puts reason/class/whitelist first so full class + whitelist assertions
@@ -49,7 +49,7 @@ Last updated: 2026-07-23
    - completed: expanded network/vendor allow cases (`allow_network`,
      `allow_vendor`, `allow_network_vendor`) and aligned the RNDIS decision
      model with the production parser's network-class view.
-   - keep efficacy checks VID/PID-correlated.
+   - efficacy checks remain VID/PID-correlated.
 7. Completed: extend native parser fuzz coverage for IAD/class-specific
    descriptors, non-contiguous and high-count interface numbers, long unknown
    descriptors, inflated lengths, and subclass/protocol predicates.
@@ -64,10 +64,26 @@ Last updated: 2026-07-23
 10. Completed: add deterministic concurrent update/attach stress coverage. A
    bounded stress row races policy load/store readbacks against repeated attach
    attempts and asserts no worker hangs/errors or malformed attach results.
-11. In progress: validate descriptor snapshots with a WDK `/WX` build and lab
-   run. Static source-contract coverage and the executable WDK build script are
-   implemented; running the script still requires a Visual Studio/WDK host.
+11. Completed: validate descriptor snapshots with a WDK `/WX` build and lab
+   run. The WDK-built snapshot passed the full Tier A matrix, full efficacy
+   suite, and descriptor TOCTOU security test.
 12. Add an opt-in hardware-backed efficacy lane through `usbip-host`.
+
+## Remaining work
+
+Only item 12 remains as the primary implementation target. The hardware-backed lane
+should use representative physical HID, storage, and NIC devices exported
+through Kali's `usbip-host`; programmable composite hardware such as a Pi
+gadget or Cynthion/Facedancer can be added as a separate opt-in profile.
+
+Lower-priority follow-ups remain conditional rather than blocking the current
+software-gadget suite:
+
+- Correlate NIC efficacy directly to the test device's VID/PID adapter.
+- Compare software-gadget, physical-device, and programmable-hardware paths.
+- Extend immutable descriptor snapshots to BOS, string, and class-specific
+  descriptors if the threat model requires those fields.
+- Capture deep HID/TCP tracing only if the endpoint-disabled regression returns.
 
 ## Validation checklist
 

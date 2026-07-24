@@ -1,5 +1,7 @@
 # USB/IP device-filter validation plan
 
+Last updated: 2026-07-24
+
 ## Purpose
 
 This plan guides development of the automated validation for the `usbip2_ude`
@@ -116,7 +118,7 @@ or expected filter failure.
       confirm each goes RED; add a benign Raw Gadget canary that enumerates
       through the same UDC/USB-IP path; then remove the skip.
 - [x] Promote Tier B robustness rows to active security gates after bring-up.
-      (`test/test_robustness.py`; current lab result: `4 passed`)
+      (`test/test_robustness.py`; current lab result: `7 passed`)
 
 **Exit criterion:** deliberately breaking Raw Gadget startup or export fails the
 test as infrastructure failure, while a valid adversarial exchange reaches the
@@ -240,15 +242,17 @@ CI, while integration tests cover only kernel/transport/enforcement wiring.
       transcript must prove two identical filter fetches, and any later changed
       response is a bypass. (`test_descriptor_toctou_no_bypass`)
 - [x] Use the deterministic Raw Gadget responder for protocol-level mutation
-      tests (implemented Phase 1; still awaiting lab bring-up before un-skip).
+      tests. The responder is deployed and the Tier B TOCTOU test is active.
 - [x] Add an executable WDK snapshot validation gate. Static CI pins the source
       contract and `tools/validate_wdk_snapshot.ps1`; a Visual Studio/WDK host
       runs that script to build `drivers/package/package.vcxproj` with `/WX`.
-- [ ] **Lab/build validation:** run `tools/validate_wdk_snapshot.ps1` on a
+- [x] **Lab/build validation:** run `tools/validate_wdk_snapshot.ps1` on a
       Visual Studio/WDK host; confirm UdeCx accepts indexed configuration
       snapshots with dynamic endpoints; run the Tier B TOCTOU test and confirm
-      Windows makes no later remote configuration request. The current Windows
-      client has no MSBuild/WDK path, so this remains a lab-host step.
+      Windows makes no later remote configuration request. Completed on
+      2026-07-24 with the WDK-built snapshot: the full Tier A matrix passed
+      (`56 passed`), the full efficacy suite passed (`111 passed, 8 skipped`),
+      and the TOCTOU security test passed.
 - [ ] Extend snapshot scope if the threat model requires immutable BOS/string/
       class-specific descriptors; current security boundary freezes device + all
       configuration/interface/endpoint descriptors (the class-filter inputs).
@@ -258,7 +262,8 @@ interfaces absent from the descriptor snapshot that passed the filter.
 
 ### Phase 6: Hardware-backed efficacy lane
 
-- [ ] Keep `usbip-vudc` for ordinary Tier A coverage.
+- [x] Keep ordinary Tier A coverage on the validated `dummy_hcd` backend;
+      retain `usbip-vudc` only for compatible, non-problematic lab profiles.
 - [ ] Use representative physical HID/storage/NIC devices exported through
       Kali's `usbip-host` as compatibility controls.
 - [ ] For programmable composite and dynamic behavior, evaluate a Pi gadget or
@@ -288,16 +293,12 @@ not be copied into artifacts.
 
 ## Immediate implementation order
 
-1. Prevent Tier B false-green results and add explicit readiness checks.
-2. Correct the TOCTOU request-state model.
-3. Narrow the HID `xfail` and add configuration/endpoint diagnostics.
-4. Narrow the CDC ECM NIC xfail by trying alternate software NIC shapes and
-   capturing VID/PID-correlated PnP driver-binding diagnostics.
-5. Add an OS-descriptor-backed RNDIS network efficacy lane.
-6. Correlate PnP, events, policy, cleanup, and deployed artifacts.
-7. Extract and fuzz the descriptor parser.
-8. Implement descriptor snapshot consistency.
-9. Add the broader hardware-backed compatibility lane.
+1. Add the opt-in hardware-backed efficacy lane through `usbip-host`.
+2. Correlate NIC efficacy directly to the test device's VID/PID adapter.
+3. Compare software-gadget, physical-device, and programmable-hardware paths.
+4. Extend immutable descriptor snapshots to BOS, string, and class-specific
+   descriptors if required by the threat model.
+5. Capture deep HID/TCP tracing only if the endpoint-disabled regression returns.
 
 ## Definition of done
 

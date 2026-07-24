@@ -79,7 +79,6 @@ gadget or Cynthion/Facedancer can be added as a separate opt-in profile.
 Lower-priority follow-ups remain conditional rather than blocking the current
 software-gadget suite:
 
-- Correlate NIC efficacy directly to the test device's VID/PID adapter.
 - Compare software-gadget, physical-device, and programmable-hardware paths.
 - Extend immutable descriptor snapshots to BOS, string, and class-specific
   descriptors if the threat model requires those fields.

@@ -182,8 +182,10 @@ transaction.
       legacy truncated event message.
 - [x] Expand filtered allow cases to network/vendor in
       `devices.py`/`test_matrix.py`.
-- [ ] Correlate the NIC efficacy check to the test VID/PID adapter rather than a
-      global adapter-name baseline diff.
+- [x] Correlate the NIC efficacy check to the test VID/PID adapter rather than a
+      global adapter-name baseline diff. (`Get-NetChildStatus` filters `Net`
+      children by VID/PID; `test_rogue_nic_appears` requires a matching child
+      with `Status=OK` and no problem code.)
 
 **Exit criterion:** stale events, unrelated device churn, failed cleanup, or wrong
 policy/deployment cannot satisfy a test oracle.
@@ -294,11 +296,10 @@ not be copied into artifacts.
 ## Immediate implementation order
 
 1. Add the opt-in hardware-backed efficacy lane through `usbip-host`.
-2. Correlate NIC efficacy directly to the test device's VID/PID adapter.
-3. Compare software-gadget, physical-device, and programmable-hardware paths.
-4. Extend immutable descriptor snapshots to BOS, string, and class-specific
+2. Compare software-gadget, physical-device, and programmable-hardware paths.
+3. Extend immutable descriptor snapshots to BOS, string, and class-specific
    descriptors if required by the threat model.
-5. Capture deep HID/TCP tracing only if the endpoint-disabled regression returns.
+4. Capture deep HID/TCP tracing only if the endpoint-disabled regression returns.
 
 ## Definition of done
 

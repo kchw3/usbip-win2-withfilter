@@ -30,6 +30,8 @@ from pathlib import Path
 
 import pytest
 
+from hardware import HardwareConfigError, load_hardware_profiles
+
 CONFIG_PATH = Path(__file__).with_name("config.ini")
 LOCAL_LINUX_DIR = Path(__file__).parent / "linux"
 LOCAL_WINDOWS_HELPERS = Path(__file__).parent / "windows" / "helpers.ps1"
@@ -45,6 +47,24 @@ def pytest_addoption(parser):
         "--run-tierb-canaries", action="store_true", default=False,
         help="run Raw Gadget Tier B lab bring-up canaries.",
     )
+    parser.addoption(
+        "--run-hardware", action="store_true", default=False,
+        help="run opt-in physical hardware efficacy tests.",
+    )
+    parser.addoption(
+        "--hardware-profile", action="append", default=[],
+        help="limit hardware tests to a configured [hardware:NAME] profile; "
+             "may be repeated.",
+    )
+    parser.addoption(
+        "--hardware-artifact-dir", default=None,
+        help="override the hardware artifact directory for this run.",
+    )
+    parser.addoption(
+        "--hardware-capture-traffic", action="store_true", default=False,
+        help="enable hardware traffic captures for this run; does not disable "
+             "capture_traffic=true in config.ini.",
+    )
 
 
 def pytest_collection_modifyitems(config, items):
@@ -52,12 +72,16 @@ def pytest_collection_modifyitems(config, items):
         reason="efficacy tests are opt-in; pass --run-efficacy")
     skip_canary = pytest.mark.skip(
         reason="Tier B Raw Gadget canaries are opt-in; pass --run-tierb-canaries")
+    skip_hardware = pytest.mark.skip(
+        reason="hardware tests are opt-in; pass --run-hardware")
     for item in items:
         if "efficacy" in item.keywords and not config.getoption("--run-efficacy"):
             item.add_marker(skip_efficacy)
         if ("tierb_canary" in item.keywords and
                 not config.getoption("--run-tierb-canaries")):
             item.add_marker(skip_canary)
+        if "hardware" in item.keywords and not config.getoption("--run-hardware"):
+            item.add_marker(skip_hardware)
 
 
 def _load_config() -> configparser.ConfigParser | None:
@@ -74,6 +98,22 @@ def config() -> configparser.ConfigParser:
     if cp is None:
         pytest.skip("test/config.ini not present; integration tests skipped")
     return cp
+
+
+@pytest.fixture(scope="session")
+def hardware_profiles(config, request):
+    if not request.config.getoption("--run-hardware"):
+        pytest.skip("hardware tests are opt-in; pass --run-hardware")
+    try:
+        profiles = load_hardware_profiles(
+            config,
+            selected=tuple(request.config.getoption("--hardware-profile")),
+            artifact_dir=request.config.getoption("--hardware-artifact-dir"),
+            capture_traffic=request.config.getoption("--hardware-capture-traffic"),
+        )
+    except HardwareConfigError as exc:
+        pytest.skip(f"hardware configuration unavailable: {exc}")
+    return profiles
 
 
 @dataclass(frozen=True)

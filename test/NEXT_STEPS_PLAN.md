@@ -246,8 +246,9 @@ oracle results, and cleanup status. Captures are diagnostic only.
 
 ### Implementation sequence
 
-1. **Profile/config gate:** add the profile parser, ignored config examples,
-   marker/options, collection skips, and parser unit tests.
+1. Completed: **Profile/config gate:** added the profile parser, ignored
+   config examples/artifacts, marker/options, collection skips, and parser
+   unit tests.
 2. **Linux safety gate:** add the shell lifecycle helper and fake-sysfs tests for
    identity mismatch, unsafe mounts/routes, export failure, and idempotent restore.
 3. **Fixture/cleanup gate:** add hardware fixtures, targeted Windows helpers,

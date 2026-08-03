@@ -540,7 +540,8 @@ class LinuxServer:
             label=f"export gadget busid={self.configured_busid}",
             vid=vid, pid=pid)
 
-    def fire_hid_marker(self, token: str, device: str = "auto") -> str:
+    def fire_hid_marker(self, token: str, device: str = "auto",
+                        char_delay: float = 0.05) -> str:
         """Inject keystrokes via the attached HID gadget to drop a marker file.
 
         device defaults to "auto": hid_type.py resolves the /dev/hidgN backing
@@ -549,12 +550,15 @@ class LinuxServer:
         """
         return self.run(
             f"python3 {shlex.quote(self.test_dir)}/payloads/hid_type.py "
-            f"--device {shlex.quote(device)} --run-marker {shlex.quote(token)}")
+            f"--device {shlex.quote(device)} --run-marker {shlex.quote(token)} "
+            f"--char-delay {char_delay:g}")
 
-    def fire_hid_text(self, text: str, device: str = "auto") -> str:
+    def fire_hid_text(self, text: str, device: str = "auto",
+                      char_delay: float = 0.05) -> str:
         return self.run(
             f"python3 {shlex.quote(self.test_dir)}/payloads/hid_type.py "
-            f"--device {shlex.quote(device)} --text {shlex.quote(text)}")
+            f"--device {shlex.quote(device)} --text {shlex.quote(text)} "
+            f"--char-delay {char_delay:g}")
 
     def probe_hid_endpoint(self, device: str = "auto") -> dict:
         """Diagnose the gadget HID interrupt-IN endpoint state.

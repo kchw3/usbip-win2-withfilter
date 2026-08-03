@@ -7,6 +7,8 @@ import uuid
 
 import pytest
 
+from conftest import write_hardware_artifact
+
 pytestmark = pytest.mark.hardware
 
 
@@ -142,3 +144,76 @@ def test_programmable_hid_marker_denied_then_allowed(
         finally:
             if win.public_marker_present(token):
                 win.remove_public_marker(token)
+
+
+def test_storage_marker_denied_then_allowed(
+    hardware_profiles, hardware_export, linux, win,
+):
+    profiles = [
+        profile for profile in hardware_profiles.values()
+        if profile.kind == "storage" and "storage_marker" in profile.oracles
+    ]
+    if not profiles:
+        pytest.skip("no configured storage-marker profile")
+
+    for profile in profiles:
+        export = hardware_export(profile.name)
+        run_id = uuid.uuid4().hex
+        token = uuid.uuid4().hex
+        filename = f"ub_{token}.txt"
+        result = {"allow": False, "deny": {}, "artifact": None}
+        linux.hardware_prepare(profile, run_id=run_id, token=token, busid=export.busid)
+        try:
+            win.set_policy(deny_all=True)
+            cursor = win.event_cursor()
+            denied = win.attach_result(export.busid)
+            assert _absent_for(win, profile)
+            result["deny"] = {"attach": denied.ok, "rejection": bool(
+                _wait_for_rejection(win, cursor, profile, export.busid))}
+            assert result["deny"]["rejection"]
+            assert win.removable_marker(filename) is None
+
+            win.hardware_cleanup(profile.vid, profile.pid)
+            win.set_policy(allow=profile.allow_categories)
+            allowed = win.attach_result(export.busid)
+            assert allowed.ok
+            assert _wait(lambda: win.pnp_present(profile.vid, profile.pid))
+            assert _wait(lambda: win.removable_marker(filename) is not None)
+            assert win.removable_marker(filename).strip() == token
+            result["allow"] = True
+        finally:
+            write_hardware_artifact(profile, run_id, result)
+
+
+def test_network_peer_denied_then_allowed(
+    hardware_profiles, hardware_export, win,
+):
+    profiles = [
+        profile for profile in hardware_profiles.values()
+        if profile.kind == "network" and "network_peer" in profile.oracles
+    ]
+    if not profiles:
+        pytest.skip("no configured network-peer profile")
+
+    for profile in profiles:
+        export = hardware_export(profile.name)
+        run_id = uuid.uuid4().hex
+        result = {"allow": False, "deny": {}}
+        try:
+            win.set_policy(deny_all=True)
+            cursor = win.event_cursor()
+            denied = win.attach_result(export.busid)
+            assert _absent_for(win, profile)
+            result["deny"] = {"attach": denied.ok, "rejection": bool(
+                _wait_for_rejection(win, cursor, profile, export.busid))}
+            assert result["deny"]["rejection"]
+
+            win.hardware_cleanup(profile.vid, profile.pid)
+            win.set_policy(allow=profile.allow_categories)
+            allowed = win.attach_result(export.busid)
+            assert allowed.ok
+            assert _wait(lambda: win.net_child_ready(profile.vid, profile.pid))
+            assert _wait(lambda: win.network_peer_probe(profile), timeout=30)
+            result["allow"] = True
+        finally:
+            write_hardware_artifact(profile, run_id, result)

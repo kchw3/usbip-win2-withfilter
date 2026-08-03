@@ -287,6 +287,8 @@ def load_hardware_profiles(
         trigger_hook = data.get("trigger_hook", fallback=None)
         if "hid_marker" in oracles and not trigger_hook:
             raise HardwareConfigError(f"{section}: hid_marker requires trigger_hook")
+        if "storage_marker" in oracles and not prepare_hook:
+            raise HardwareConfigError(f"{section}: storage_marker requires prepare_hook")
 
         profiles[name] = HardwareProfile(
             name=name,

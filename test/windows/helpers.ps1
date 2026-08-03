@@ -336,6 +336,16 @@ function Get-RemovableMarker {
     return $null
 }
 
+function Test-NetworkPeer {
+    param(
+        [Parameter(Mandatory)] [string] $Address,
+        [Parameter(Mandatory)] [int] $Port,
+        [Parameter(Mandatory)] [string] $SourceAddress
+    )
+    Test-NetConnection -ComputerName $Address -Port $Port `
+        -SourceAddress $SourceAddress -InformationLevel Quiet
+}
+
 function Test-PublicMarker {
     # True if the BadUSB keystroke payload dropped its marker (=> code executed).
     param([Parameter(Mandatory)] [string] $Token)

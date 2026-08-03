@@ -5,7 +5,7 @@ import shlex
 
 import pytest
 
-from conftest import hardware_hook_command, hardware_script_command
+from conftest import hardware_hook_command, hardware_script_command, write_hardware_artifact
 from hardware import load_hardware_profiles
 from test_hardware_profiles import BASE
 
@@ -48,3 +48,19 @@ def test_hardware_hook_command_exposes_only_fixed_run_variables():
     assert "USBIP_TEST_PID=0001" in command
     assert command.endswith("bash '/opt/lab hardware/trigger.sh'")
     assert "PATH=" not in command
+
+
+def test_hardware_artifact_redacts_sensitive_profile_result(tmp_path):
+    cp = configparser.ConfigParser()
+    cp.read_string(BASE)
+    profile = load_hardware_profiles(cp)["keyboard"]
+    profile = profile.__class__(**{**profile.__dict__, "artifact_dir": tmp_path})
+
+    path = write_hardware_artifact(
+        profile, "run-1",
+        {"serial": "secret-serial", "peer_ipv4": "192.0.2.20", "ok": True},
+    )
+    raw = path.read_text()
+    assert "secret-serial" not in raw
+    assert "192.0.2.20" not in raw
+    assert '"ok": true' in raw

@@ -38,6 +38,7 @@ pid = 0002
 serial = LAB-STORAGE-01
 allow_categories = storage
 oracles = storage_marker
+prepare_hook = /opt/lab/prepare_storage_marker.sh
 confirm_physical_unbind = {ACK_TEXT}
 
 [hardware:nic]

@@ -183,6 +183,36 @@ def hardware_hook_command(
     return f"env -i {env} bash {shlex.quote(hook)}"
 
 
+def write_hardware_artifact(
+    profile: HardwareProfile, run_id: str, payload: dict,
+) -> Path:
+    """Write a redacted, JSON-serializable result bundle for a hardware run."""
+    def redact(value):
+        if isinstance(value, dict):
+            return {
+                key: ("<redacted>" if any(token in key.lower() for token in
+                        ("serial", "password", "secret", "credential", "address", "ipv4"))
+                      else redact(item))
+                for key, item in value.items()
+            }
+        if isinstance(value, list):
+            return [redact(item) for item in value]
+        return value
+
+    profile.artifact_dir.mkdir(parents=True, exist_ok=True)
+    safe = {
+        "run_id": run_id,
+        "profile": profile.name,
+        "kind": profile.kind,
+        "vid": profile.vid,
+        "pid": profile.pid,
+        "result": redact(payload),
+    }
+    path = profile.artifact_dir / f"hardware-{profile.name}-{run_id}.json"
+    path.write_text(json.dumps(safe, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return path
+
+
 class LinuxServer:
     """Thin SSH wrapper around the gadget scripts on the server."""
 
@@ -1066,6 +1096,16 @@ class WindowsClient:
                     str(node.get("Problem")) in ("0", "", "None")):
                 return True
         return False
+
+    def network_peer_probe(self, profile: HardwareProfile) -> bool:
+        if not profile.windows_ipv4 or not profile.peer_ipv4 or not profile.peer_tcp_port:
+            raise ValueError(f"network profile {profile.name} lacks peer settings")
+        script = (
+            f"Test-NetworkPeer -Address {self._ps_literal(profile.peer_ipv4)} "
+            f"-Port {profile.peer_tcp_port} "
+            f"-SourceAddress {self._ps_literal(profile.windows_ipv4)}"
+        )
+        return self.ps(script).std_out.decode().strip().lower().startswith("true")
 
     def net_adapter_names(self) -> set[str]:
         r = self.ps("Get-PresentNetAdapterNames")

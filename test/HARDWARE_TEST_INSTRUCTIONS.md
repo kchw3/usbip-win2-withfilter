@@ -8,6 +8,11 @@ Use only dedicated lab hardware and an isolated Windows VM. Never use a system
 disk, mounted storage device, production NIC, or a device carrying the SSH or
 controller route.
 
+VMware virtual mouse/keyboard devices, USB hubs, root hubs, and the synthetic
+`dummy_hcd` device are not physical hardware profiles. They may be used by the
+software and Tier B test lanes, but they do not satisfy the hardware-lane
+requirement and must not be configured under `[hardware:NAME]`.
+
 ## 1. Identify the hardware
 
 Run these read-only commands on the Linux USB/IP server:
@@ -219,3 +224,8 @@ The software and hardware lanes are independent. Hardware tests remain skipped
 until `[hardware]` profiles are configured. Tier B Raw Gadget tests additionally
 require the Linux `raw_gadget` module and `/dev/raw-gadget`; a missing device
 prevents those robustness rows from starting.
+
+The current Linux lab inventory contains only VMware virtual USB input devices,
+USB hubs/root hubs, and the synthetic `dummy_hcd` bus. A physical HID,
+mass-storage device, NIC, or programmable HID must be passed through to the VM
+before the hardware profiles can be configured and run.

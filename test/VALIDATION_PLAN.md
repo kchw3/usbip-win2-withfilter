@@ -264,6 +264,15 @@ interfaces absent from the descriptor snapshot that passed the filter.
 
 ### Phase 6: Hardware-backed efficacy lane
 
+This lane is genuinely physical at the Linux USB/IP server boundary: use a real
+HID, disposable mass-storage device, or USB NIC attached directly to or passed
+through to the Linux server VM, then export that device with `usbip-host` to
+Windows. `dummy_hcd`, configfs gadgets, and VM-local `raw_gadget` are separate
+software lanes and do not satisfy this phase. A Pi gadget, Cynthion, or
+Facedancer is valid only as programmable source hardware whose USB output is
+visible in the Linux server's USB sysfs as a real device and completes the same
+preflight, export, and cleanup lifecycle.
+
 - [x] Keep ordinary Tier A coverage on the validated `dummy_hcd` backend;
       retain `usbip-vudc` only for compatible, non-problematic lab profiles.
 - [ ] Use representative physical HID/storage/NIC devices exported through

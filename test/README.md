@@ -85,6 +85,22 @@ Windows client (a VM with snapshots is recommended):
 
 ## Running
 
+### Hardware lane versus software simulation
+
+The ordinary Tier A and Tier B lanes are software-backed tests and can run with
+a VM, `dummy_hcd`, configfs gadgets, or VM-local `raw_gadget`. They do not prove
+that a physical USB controller or production device behaves correctly.
+
+The opt-in hardware lane requires a real corresponding USB device (physical
+HID, disposable mass storage, or USB NIC) attached directly to or passed
+through to the Linux USB/IP server VM. The server must see it in USB sysfs with
+a stable physical bus ID; the test then exports that device through
+`usbip-host` to Windows. A Pi Zero, Cynthion, or Facedancer is allowed only as
+programmable source hardware when its USB output meets that same requirement.
+A Pi or VM running `raw_gadget` without a real USB device visible on the Linux
+server remains software simulation, not hardware-lane evidence. See
+[HARDWARE_TEST_INSTRUCTIONS.md](HARDWARE_TEST_INSTRUCTIONS.md).
+
 Unit tests only (no lab needed):
 ```
 pytest test/test_descriptors.py -v

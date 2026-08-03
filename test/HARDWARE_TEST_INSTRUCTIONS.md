@@ -4,6 +4,19 @@ The hardware lane is deliberately opt-in. It temporarily unbinds a selected
 physical USB device on the Linux USB/IP server, exports it through
 `usbip-host`, and attaches it to the disposable Windows test client.
 
+The primary hardware lane uses a real device of the tested type: a physical
+HID, dedicated disposable mass-storage device, or USB NIC attached directly to
+or passed through to the Linux USB/IP server VM. It does not use `dummy_hcd`,
+configfs gadgets, or a VM-local `raw_gadget` process.
+
+A Pi Zero, Cynthion, or Facedancer is optional programmable hardware, not a
+replacement for the physical USB path. It counts only when its USB output is
+visible on the Linux server as a real device with a stable physical sysfs bus
+ID, passes the same identity/safety preflight, and is exported through
+`usbip-host`. A Pi running `raw_gadget` elsewhere without appearing as a USB
+device on the Linux server is outside this lane; VM-local Raw Gadget remains a
+Tier B software simulation.
+
 Use only dedicated lab hardware and an isolated Windows VM. Never use a system
 disk, mounted storage device, production NIC, or a device carrying the SSH or
 controller route.

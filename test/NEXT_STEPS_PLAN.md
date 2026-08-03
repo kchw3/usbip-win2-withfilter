@@ -93,6 +93,21 @@ representative production hardware. The hardware lane must prove that:
 5. failures are attributed to the device, export path, transport, driver,
    filter decision, or payload oracle.
 
+### What “hardware lane” means
+
+The primary lane means a real USB device of the corresponding type is attached
+directly to, or passed through to, the Linux USB/IP server VM. The Linux server
+must enumerate that device in USB sysfs with a stable physical bus ID; the
+hardware test unbinds and exports it through `usbip-host` before Windows sees
+it. `dummy_hcd`, configfs gadgets, and VM-local `raw_gadget` are software lanes,
+not physical hardware evidence.
+
+A Pi Zero, Cynthion, or Facedancer may provide programmable HID/composite
+behavior, but only when its USB output is physically connected to the Linux
+server and appears there as a real USB device that passes the same preflight,
+export, and restore lifecycle. A separate Pi running `raw_gadget` that is not
+visible as a USB device on the Linux server is outside this lane.
+
 A normal keyboard is compatibility evidence, not an automated BadUSB efficacy
 test. HID efficacy requires programmable hardware with an external trigger.
 Likewise, NIC efficacy requires traffic through the VID/PID-correlated adapter,

@@ -125,7 +125,13 @@ native policy corruption/limit coverage, reconnect-after-policy-update, and
 transport-interruption fail-closed coverage, and concurrent update/attach stress
 are implemented. WDK snapshot source-contract/build-script coverage is
 implemented and validated against the WDK-built snapshot. Next target: the
-hardware-backed efficacy lane per `NEXT_STEPS_PLAN.md`.
+hardware-backed efficacy lane per `NEXT_STEPS_PLAN.md`. That lane means a real
+HID, disposable mass-storage device, or USB NIC attached to or passed through
+to the Linux USB/IP server and exported via `usbip-host`; `dummy_hcd`, configfs,
+and VM-local `raw_gadget` remain software lanes. Programmable hardware such as
+a Pi Zero, Cynthion, or Facedancer qualifies only when its USB output appears
+as a real device in the Linux server's USB sysfs and completes the same export
+and cleanup lifecycle.
 
 ## Config knobs
 

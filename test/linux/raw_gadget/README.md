@@ -1,5 +1,11 @@
 # Tier B simulations: raw_gadget
 
+These are software simulations, not the physical hardware lane. They run
+`raw_gadget` on the Linux USB/IP server, normally bound to `dummy_hcd`, so the
+USB device is synthesized in software. The hardware lane instead requires a
+real USB device visible in the Linux server's USB sysfs and exported through
+`usbip-host`; see [HARDWARE_TEST_INSTRUCTIONS.md](../../HARDWARE_TEST_INSTRUCTIONS.md).
+
 These cases cannot be expressed with stock configfs functions, so they use the
 Linux `raw_gadget` interface (`/dev/raw-gadget`, kernel module `raw_gadget`),
 which lets a userspace program answer every USB control request with arbitrary

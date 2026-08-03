@@ -30,7 +30,7 @@ from pathlib import Path
 
 import pytest
 
-from hardware import HardwareConfigError, load_hardware_profiles
+from hardware import ACK_TEXT, HardwareConfigError, HardwareProfile, load_hardware_profiles
 
 CONFIG_PATH = Path(__file__).with_name("config.ini")
 LOCAL_LINUX_DIR = Path(__file__).parent / "linux"
@@ -140,6 +140,32 @@ class AttachResult:
 class FilterPolicyState:
     mode: str
     categories: tuple[str, ...]
+
+
+@dataclass
+class HardwareExport:
+    """Handle for one verified physical USB/IP export."""
+
+    profile: HardwareProfile
+    busid: str
+    restored: bool = False
+
+
+def hardware_script_command(test_dir: str, action: str, profile: HardwareProfile) -> str:
+    """Build the remote hardware lifecycle command without executing it."""
+    if action not in {"preflight", "export", "restore", "status"}:
+        raise ValueError(f"unsupported hardware lifecycle action: {action}")
+    script = f"{test_dir}/hardware_device.sh"
+    args = (
+        f"--busid {shlex.quote(profile.busid)} "
+        f"--vid {shlex.quote(profile.vid)} "
+        f"--pid {shlex.quote(profile.pid)} "
+        f"--kind {shlex.quote(profile.kind)} "
+        f"--ack {shlex.quote(ACK_TEXT)}"
+    )
+    if profile.serial:
+        args += f" --serial {shlex.quote(profile.serial)}"
+    return f"bash {shlex.quote(script)} {action} {args}"
 
 
 class LinuxServer:
@@ -669,6 +695,32 @@ class LinuxServer:
             f"bash {shlex.quote(self.test_dir)}/gadgets/teardown.sh",
             check=False, timeout=20.0, label="teardown gadget")
 
+    def hardware_preflight(self, profile: HardwareProfile) -> str:
+        return self.run(
+            hardware_script_command(self.test_dir, "preflight", profile),
+            label=f"hardware preflight {profile.name}")
+
+    def hardware_export(self, profile: HardwareProfile) -> HardwareExport:
+        self.run(
+            hardware_script_command(self.test_dir, "export", profile),
+            label=f"hardware export {profile.name}")
+        return HardwareExport(profile=profile, busid=profile.busid)
+
+    def hardware_status(self, export: HardwareExport) -> str:
+        return self.run(
+            hardware_script_command(self.test_dir, "status", export.profile),
+            label=f"hardware status {export.profile.name}")
+
+    def hardware_restore(self, export: HardwareExport) -> None:
+        if export.restored:
+            return
+        try:
+            self.run(
+                hardware_script_command(self.test_dir, "restore", export.profile),
+                label=f"hardware restore {export.profile.name}")
+        finally:
+            export.restored = True
+
 
 class WindowsClient:
     """Thin WinRM wrapper that runs PowerShell with helpers.ps1 dot-sourced."""
@@ -892,6 +944,20 @@ class WindowsClient:
         """Any present node, regardless of status (deny-path security oracle)."""
         r = self.ps(f"Get-PnpExposure -Vid '{vid}' -ProductId '{pid}'")
         return [json.loads(ln) for ln in r.std_out.decode().splitlines() if ln.strip()]
+
+    def hardware_cleanup(self, vid: str, pid: str) -> None:
+        """Remove only the matching physical profile's PnP state."""
+        vid_arg = self._ps_literal(vid)
+        pid_arg = self._ps_literal(pid)
+        r = self._cleanup_step(
+            f"hardware cleanup VID={vid} PID={pid}",
+            f"Clear-UsbipState -UsbipExe $UsbipExe -TestVid {vid_arg} "
+            f"-ProductId {pid_arg} -DetachMode 'skip'",
+        )
+        self._print_cleanup_output(r)
+        result = self._json_output(r)
+        if not result.get("Clean") or result.get("Remaining", 0):
+            raise RuntimeError(f"targeted hardware cleanup failed: {result}")
 
     def pnp_node_details(self, vid: str, pid: str) -> list[dict]:
         """Detailed PnP/driver matching state for all VID/PID nodes."""
@@ -1127,3 +1193,25 @@ def win(config) -> WindowsClient:
     cli.cleanup()
     yield cli
     cli.cleanup()
+
+
+@pytest.fixture()
+def hardware_export(linux, win, hardware_profiles):
+    """Factory fixture that owns physical export, Windows cleanup, and restore."""
+    exports: list[HardwareExport] = []
+
+    def start(name: str) -> HardwareExport:
+        if name not in hardware_profiles:
+            raise KeyError(f"hardware profile not selected: {name}")
+        profile = hardware_profiles[name]
+        win.hardware_cleanup(profile.vid, profile.pid)
+        export = linux.hardware_export(profile)
+        exports.append(export)
+        return export
+
+    yield start
+    for export in reversed(exports):
+        try:
+            win.hardware_cleanup(export.profile.vid, export.profile.pid)
+        finally:
+            linux.hardware_restore(export)

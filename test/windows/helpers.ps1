@@ -439,6 +439,7 @@ function Clear-UsbipState {
     param(
         [string] $UsbipExe = 'usbip.exe',
         [string] $TestVid  = '16C0',      # VID shared by all test gadgets (devices.py)
+        [string] $ProductId = '',
         [ValidateSet('closeonly', 'full', 'skip')]
         [string] $DetachMode = 'skip'
     )
@@ -463,7 +464,7 @@ function Clear-UsbipState {
     }
     $null = Invoke-UsbipChecked -UsbipExe $UsbipExe -Arguments @('filter', '--disable')
 
-    $match = "VID_$TestVid"
+    $match = if ($ProductId) { "VID_$TestVid&PID_$ProductId" } else { "VID_$TestVid" }
     $removePnpDevice = Get-Command Remove-PnpDevice -ErrorAction SilentlyContinue
     $pnputil = Get-Command pnputil.exe -ErrorAction SilentlyContinue
     $nodes = @(Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue |

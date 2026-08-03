@@ -168,6 +168,21 @@ def hardware_script_command(test_dir: str, action: str, profile: HardwareProfile
     return f"bash {shlex.quote(script)} {action} {args}"
 
 
+def hardware_hook_command(
+    hook: str, *, run_id: str, token: str, busid: str, vid: str, pid: str,
+) -> str:
+    """Build a hook command with only the documented hardware environment."""
+    values = {
+        "USBIP_TEST_RUN_ID": run_id,
+        "USBIP_TEST_TOKEN": token,
+        "USBIP_TEST_BUSID": busid,
+        "USBIP_TEST_VID": vid,
+        "USBIP_TEST_PID": pid,
+    }
+    env = " ".join(f"{key}={shlex.quote(value)}" for key, value in values.items())
+    return f"env -i {env} bash {shlex.quote(hook)}"
+
+
 class LinuxServer:
     """Thin SSH wrapper around the gadget scripts on the server."""
 
@@ -720,6 +735,35 @@ class LinuxServer:
                 label=f"hardware restore {export.profile.name}")
         finally:
             export.restored = True
+
+    def hardware_hook(
+        self, profile: HardwareProfile, *, hook: str, run_id: str, token: str,
+        busid: str | None = None,
+    ) -> str:
+        allowed = {profile.prepare_hook, profile.trigger_hook} - {None}
+        if hook not in allowed:
+            raise ValueError(f"hook is not configured for hardware profile {profile.name}")
+        return self.run(
+            hardware_hook_command(
+                hook, run_id=run_id, token=token, busid=busid or profile.busid,
+                vid=profile.vid, pid=profile.pid,
+            ),
+            label=f"hardware hook {profile.name}",
+        )
+
+    def hardware_prepare(self, profile: HardwareProfile, *, run_id: str, token: str,
+                          busid: str | None = None) -> str:
+        if not profile.prepare_hook:
+            return ""
+        return self.hardware_hook(
+            profile, hook=profile.prepare_hook, run_id=run_id, token=token, busid=busid)
+
+    def hardware_trigger(self, profile: HardwareProfile, *, run_id: str, token: str,
+                          busid: str | None = None) -> str:
+        if not profile.trigger_hook:
+            raise ValueError(f"hardware profile {profile.name} has no trigger hook")
+        return self.hardware_hook(
+            profile, hook=profile.trigger_hook, run_id=run_id, token=token, busid=busid)
 
 
 class WindowsClient:

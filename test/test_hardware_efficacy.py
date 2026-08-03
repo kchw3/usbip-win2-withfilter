@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+import uuid
 
 import pytest
 
@@ -91,3 +92,53 @@ def test_physical_profile_deny_then_allow(kind, hardware_profiles, hardware_expo
         assert _wait(
             lambda: _allow_oracle(win, profile),
         ), f"allow oracle failed for physical {profile.name}"
+
+
+def test_programmable_hid_marker_denied_then_allowed(
+    hardware_profiles, hardware_export, linux, win,
+):
+    """A programmable HID effect must be impossible while its class is denied."""
+    profiles = [
+        profile for profile in hardware_profiles.values()
+        if profile.kind in {"programmable_hid", "composite"}
+        and "hid_marker" in profile.oracles
+    ]
+    if not profiles:
+        pytest.skip("no configured programmable HID/composite marker profile")
+
+    for profile in profiles:
+        export = hardware_export(profile.name)
+        run_id = uuid.uuid4().hex
+        token = uuid.uuid4().hex
+        win.remove_public_marker(token)
+        linux.hardware_prepare(profile, run_id=run_id, token=token, busid=export.busid)
+        try:
+            win.set_policy(deny_all=True)
+            cursor = win.event_cursor()
+            denied = win.attach_result(export.busid)
+            assert _absent_for(win, profile), (
+                f"denied programmable profile {profile.name} exposed a PnP node"
+            )
+            assert _wait_for_rejection(win, cursor, profile, export.busid), (
+                f"no fresh rejection for programmable profile {profile.name}; "
+                f"attach={denied}"
+            )
+            linux.hardware_trigger(profile, run_id=run_id, token=token, busid=export.busid)
+            assert not _wait(lambda: win.public_marker_present(token), timeout=3), (
+                f"denied programmable profile {profile.name} produced marker {token}"
+            )
+
+            win.hardware_cleanup(profile.vid, profile.pid)
+            win.set_policy(allow=profile.allow_categories)
+            allowed = win.attach_result(export.busid)
+            assert allowed.ok, f"allowed programmable attach failed: {allowed}"
+            assert _wait(lambda: win.pnp_exposure(profile.vid, profile.pid)), (
+                f"allowed programmable profile {profile.name} did not expose PnP"
+            )
+            linux.hardware_trigger(profile, run_id=run_id, token=token, busid=export.busid)
+            assert _wait(lambda: win.public_marker_present(token)), (
+                f"allowed programmable profile {profile.name} produced no marker {token}"
+            )
+        finally:
+            if win.public_marker_present(token):
+                win.remove_public_marker(token)
